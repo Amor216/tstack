@@ -1,7 +1,20 @@
 ---
 name: workspace
-description: Set up or audit a project workspace so Tstack works at full strength: folder map and AGENTS.md, context files, the Tstack project files (MODULES.md, specs/, .out-of-scope/), the end-to-end verification, git and a private repo. Use for "Workspace einrichten", "neues Projekt", "Projekt aufsetzen", "Ordnerstruktur", or a project without AGENTS.md.
+description: Set up or audit a project workspace so Tstack works at full strength: folder map and AGENTS.md, context files, the Tstack project files (MODULES.md, specs/, .out-of-scope/), the end-to-end verification, git and a private repo; or set up a whole Arbeitsordner (Home/ control centre plus Projekte, Karriere, Sammlung, Tabs, Archiv). Use for "Arbeitsordner einrichten", "neuer Rechner", "Home-Ordner aufsetzen", "Workspace einrichten", "neues Projekt", "Projekt aufsetzen", "Ordnerstruktur", or a project without AGENTS.md.
 ---
+
+## Modus: Arbeitsordner einrichten
+
+Use when the user says "Arbeitsordner einrichten", "neuer Rechner" or "Home-Ordner aufsetzen". No interview: the scaffold is fixed, the user fills it later.
+1. Pick the target: the folder the user named, else `<Desktop>/Arbeitsordner`. Say it in one line.
+2. Run `node "<this skill's base directory>/../../scripts/arbeitsordner.js" <target>` and show its output. It never overwrites existing files.
+3. If `git -C <target>/Home status --porcelain` shows changes, commit everything in `Home/`.
+4. Only after the user's OK (outward-facing), offer each:
+   - Private repo: `gh repo create <name> --private --source <target>/Home --push`; suggest the name `home`, the user may pick another.
+   - Link `~/.claude/skills` → `<target>/Home/skills`, only if `~/.claude/skills` does not exist. Windows: PowerShell `New-Item -ItemType Junction -Path <link> -Target <target>/Home/skills` (not `ln -s` in Git Bash, it copies); else `ln -s <target>/Home/skills <link>`. If `~/.claude/skills` exists (even empty), delete nothing; tell the user to move their skills into `Home/skills` by hand.
+5. Continue with the new-project flow below for the first project under `Projekte/`.
+
+## Neues Projekt
 
 Reuse first: if the `new-project` skill is installed, run it (Skill tool) for the interview, the folder map, AGENTS.md/CLAUDE.md, context.md files, learnings, skills and hooks; it also audits existing projects. Then add the Tstack layer below. Without `new-project`: ask in one round (in a `claude -p` run: report BLOCKED with the questions) (purpose, language and stack, where it lives) and create AGENTS.md with a short intro, build and test commands, and a folder map, plus CLAUDE.md as a one-line pointer to it.
 

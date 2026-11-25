@@ -1,0 +1,29 @@
+# Home
+
+Steuerzentrale für alle Projekte: von hier aus planen, recherchieren und repo-übergreifend arbeiten.
+
+## Bereiche (neben `Home/`)
+- `../Projekte/` – alle Projekte, flach, ein Ordner pro Projekt
+- `../Karriere/` – Bewerbungen, Lebenslauf, Zeugnisse (nie ins Git)
+- `../Sammlung/` – Fundstücke und Wissens-Wikis; zuerst `context.md`
+- `../Tabs/` – gesicherte Browser-Tabs; zuerst `context.md`
+- `../Archiv/` – Abgelegtes, nie als Quelle nutzen
+
+## Projekte
+Vor Änderungen in einem Projekt dessen `AGENTS.md` lesen.
+
+Format: ``- <Name> (<Zweck>): `../Projekte/<Name>`. Clone from <repo-url> if missing.``
+
+## Gemeinsame Regeln
+- Projekt-Anweisungen in Repos heißen `AGENTS.md`.
+- Jedes Projekt hat ein privates Repo unter `<github-user>`. Nach jedem Commit pushen.
+- Nie ins Git: `.env`, Tokens, Browserprofile/Cookies, Videos und große Medien, persönliche Dokumente aus `../Karriere/`.
+
+## Skills
+- `skills/` – eigene Skills, verknüpft als `~/.claude/skills`.
+
+## Anleitungen
+- `Anleitungen/` – Anleitungen und Prompt-Vorlagen, eine Datei pro Thema.
+
+## Tstack-Verbesserungen
+- `tstack-verbesserungen/verbesserungen.md` – was an Tstack auffällt. Offene Punkte abarbeiten, danach abhaken mit Datum und Commit.
