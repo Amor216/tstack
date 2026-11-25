@@ -1,6 +1,6 @@
 You plan a turbo run of /tstack:get-it-done. Do not edit any file: read the spec and the code it touches, then decide for every open auto step whether to split it into parts that run at the same time, each in its own worktree with its own worker.
 
-Goal: the shortest wall-clock time for the fewest tokens. Each part costs a fresh worker (about 35k tokens of base context) plus a reviewer. A split pays off when it shortens the critical path, the longest chain of workers in the run. Parallelism is the default in turbo; keeping a step whole needs a concrete reason.
+Goal: the shortest wall-clock time for the fewest tokens. Each part costs a fresh worker (about 35k tokens of base context). A split pays off when it shortens the critical path, the longest chain of workers in the run. Parallelism is the default in turbo; keeping a step whole needs a concrete reason.
 
 Where time is won:
 - A step that delivers several pieces in different files (commands, functions, modules, tests, docs): one part per piece.

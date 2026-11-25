@@ -27,7 +27,8 @@ function load(repo) {
   });
 }
 
-const PHASE = { worker: { started: 'Worker', finished: 'Prüfung' }, check: 'Review', review: 'Merge', merge: 'Merge', join: 'Schritt-Prüfung' };
+const PHASE = { worker: { started: 'Worker', finished: 'Prüfung', error: 'Prüfung' }, check: 'Merge', verifier: { started: 'Verifikation', finished: 'Prüfung', error: 'Prüfung', rejected: 'Worker' },
+  merge: 'Worker', join: 'Schritt-Prüfung' };
 const ICON = { done: '✔', running: '▶', failed: '✖', blocked: '⏸', manual: '⏸', split: '✂', waiting: '○' };
 const LABEL = { failed: 'gescheitert', blocked: 'blockiert, braucht dich', manual: 'manuell, braucht dich',
   split: 'Kontext voll, Schritt aufteilen' };
@@ -55,7 +56,7 @@ function render(run, now = new Date()) {
     const parts = [...new Set(run.rows.map(r => r.step).filter(id => id.startsWith(s.id + '.')))];
     const rows = run.rows.filter(r => r.step === s.id || parts.includes(r.step));
     const state = stateOf(run, s, rows);
-    const last = rows[rows.length - 1];
+    const last = rows.filter(r => PHASE[r.phase]).pop() || rows[rows.length - 1];
     const tokens = rows.reduce((n, r) => n + r.tokens, 0);
     let info = LABEL[state] || '';
     if (state === 'done') info = `fertig  ${(rows.find(r => r.phase === 'merge') || {}).evidence || ''}`;
@@ -63,7 +64,7 @@ function render(run, now = new Date()) {
       const phase = PHASE[last.phase];
       const started = [...rows].reverse().find(r => r.phase === 'worker' && r.result === 'started');
       info = parts.length && last.step !== s.id ? `parallel in ${parts.length} Teilen seit ${mins(now - rows[0].ts)}`
-        : `${typeof phase === 'string' ? phase : phase[last.result]} #${last.attempt || started.attempt} seit ${mins(now - started.ts)}  ${path.basename(started.evidence)}`;
+        : `${(typeof phase === 'string' ? phase : (phase || {})[last.result]) || 'Prüfung'} Runde ${last.attempt || started.attempt} seit ${mins(now - started.ts)}  ${path.basename(started.evidence)}`;
     }
     if (state === 'waiting') {
       const open = s.blockedBy.filter(b => stateOf(run, run.steps.find(x => x.id === b) || { id: b, done: true }, run.rows.filter(r => r.step === b)) !== 'done');
@@ -73,6 +74,13 @@ function render(run, now = new Date()) {
     out.push(`  ${indent}${ICON[state]} ${s.id} ${s.title}  ${info}${tokens ? '  ' + k(tokens) : ''}`);
     const partState = p => run.summary?.parts?.[p] || stateOf(run, { id: p }, run.rows.filter(r => r.step === p));
     if (parts.length) out.push(`  ${' '.repeat(indent.length)}    Teile: ${parts.map(p => `${ICON[partState(p)]} ${p}`).join('  ')}`);
+  }
+  const review = run.rows.find(r => r.step === 'run' && r.phase === 'review');
+  const fix = run.rows.filter(r => r.step === 'review' && r.phase === 'worker').pop();
+  const allDone = run.steps.length && run.steps.every(s => stateOf(run, s, run.rows.filter(r => r.step === s.id)) === 'done');
+  if (review || (run.live && allDone)) {
+    out.push(`  Review am Ende: ${!review ? 'läuft' : review.result === 'ship' ? 'ohne Befund'
+      : `Befunde, Fix-Worker ${!fix || fix.result === 'started' ? 'läuft' : 'fertig'}`}`);
   }
   if (status === 'abgebrochen' || status === 'nicht gelandet') out.push(`  weiter: node gid.js ${run.specRel} --resume ${run.id}`);
   return out.join('\n');

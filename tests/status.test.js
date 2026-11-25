@@ -29,11 +29,11 @@ const spec = done => `# 01 Lauf-Aktivität
 const row = (min, ...cells) => [`2026-11-23T20:${String(min).padStart(2, '0')}:00.000Z`, ...cells].join('\t');
 const LOG = ['ts\tstep\tattempt\tphase\tresult\tevidence\ttokens',
   row(0, 'run', '', 'start', 'turbo j=4', 'specs/01.md on main', ''),
-  row(1, 'S1', 1, 'worker', 'started', '/r/.tstack/wt/1/S1-a1', ''),
-  row(6, 'S1', 1, 'worker', 'finished', 'ok', 200000),
-  row(7, 'S1', 1, 'review', 'PASS', 'ok', 30000),
+  row(1, 'S1', 1, 'worker', 'started', '/r/.tstack/wt/1/S1', ''),
+  row(6, 'S1', 1, 'worker', 'finished', 'ok', 230000),
+  row(7, 'S1', 1, 'check', 'green', 'true → ', ''),
   row(8, 'S1', 1, 'merge', 'merged', '22b4eda', ''),
-  row(9, 'S2', 1, 'worker', 'started', '/r/.tstack/wt/1/S2-a1', '')];
+  row(9, 'S2', 1, 'worker', 'started', '/r/.tstack/wt/1/S2', '')];
 
 function makeRun({ summary, pid = process.pid } = {}) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'status-'));
@@ -52,7 +52,7 @@ test('a live run shows each step with state, phase, worktree, deps and tokens', 
   const out = render(run, new Date('2026-11-23T20:12:00Z'));
   assert.match(out, /20261123200000 .*specs\/01\.md.*läuft 12m.*230k Tokens/);
   assert.match(out, /✔ S1 Modul .*fertig.*22b4eda.*230k/);
-  assert.match(out, /▶ S2 Recherche .*Worker #1 seit 3m.*S2-a1/);
+  assert.match(out, /▶ S2 Recherche .*Worker Runde 1 seit 3m {2}S2\b/);
   assert.match(out, /○ S3 Löschen .*wartet auf S2/);
   assert.ok(out.indexOf('S3') > out.indexOf('S2') && /\n\s+└.*S3/.test(out));
 });
@@ -84,4 +84,24 @@ test('a split step shows its parts, running beside each other', () => {
   assert.match(out, /▶ S2 Recherche .*parallel in 2 Teilen seit 3m.*40k/);
   assert.match(out, /Teile: ✔ S2\.a {2}▶ S2\.b/);
   assert.match(out, /○ S3 Löschen .*wartet auf S2/);
+});
+
+test('after the last merge a live run shows the review at the end and its fix worker', () => {
+  const repo = makeRun();
+  const log = path.join(repo, '.tstack', 'runs', '20261123200000', 'log.tsv');
+  const merged = [...LOG.slice(0, 5), row(9, 'S2', 1, 'merge', 'merged', 'b', ''), row(10, 'S3', 1, 'merge', 'merged', 'c', '')];
+  fs.writeFileSync(log, merged.join('\n') + '\n');
+  assert.match(render(load(repo)[0], new Date('2026-11-23T20:12:00Z')), /\n {2}Review am Ende: läuft/);
+  fs.writeFileSync(log, [...merged, row(11, 'run', '', 'review', 'fix', 'full review: /r/review.md', 5000),
+    row(11, 'review', 1, 'worker', 'started', '/r/integration', '')].join('\n') + '\n');
+  assert.match(render(load(repo)[0], new Date('2026-11-23T20:12:00Z')), /\n {2}Review am Ende: Befunde, Fix-Worker läuft/);
+});
+
+test('an incident or verifier error as the last row of a running step still renders its phase', () => {
+  const repo = makeRun();
+  const log = path.join(repo, '.tstack', 'runs', '20261123200000', 'log.tsv');
+  fs.writeFileSync(log, [...LOG, row(10, 'S2', 1, 'worker', 'error', 'boom', 100), row(10, 'S2', '', 'incident', 'worker round 1 ended with an error', '', '')].join('\n') + '\n');
+  assert.match(render(load(repo)[0], new Date('2026-11-23T20:12:00Z')), /▶ S2 Recherche .*Prüfung Runde 1/);
+  fs.writeFileSync(log, [...LOG, row(10, 'S2', 1, 'verifier', 'error', 'boom', 100)].join('\n') + '\n');
+  assert.match(render(load(repo)[0], new Date('2026-11-23T20:12:00Z')), /▶ S2 Recherche .*Prüfung Runde 1/);
 });

@@ -39,7 +39,7 @@ Projektordner. Veröffentlichen später = Repo öffentlich machen.
 | E1 | Gefragt wird nur in den Klär-Skills (`/grill`, `/grill-docs`, `/feature-design`, `/spec` …). Ab `/get-it-done` fragt kein Chat mehr; ein Worker meldet BLOCKED statt zu fragen (in `claude -p` gibt es kein Frage-Tool). |
 | E2 | Alles, was implementiert wird, braucht eine Prüfschleife. Jeder Spec-Schritt hat einen Prüfbefehl, der vorher nachweislich rot war. Unit-Tests dort, wo eine klare Prüfstelle existiert (`/tdd`), sonst Build, Typecheck, Smoke oder der projekteigene Verify-Skill. |
 | E3 | Parallelität bestimmt der Abhängigkeitsgraph der Spec, pro Aufgabe. Bausteine, die dieselbe Datei ändern, bekommen eine Kante. |
-| E4 | Jeder Schritt im eigenen Worktree-Branch; nach PASS des Prüf-Chats Merge in `main` und Push. Keine PRs. |
+| E4 | Jeder Schritt im eigenen Worktree-Branch; sind die Tore grün, Merge in den Integrationszweig; nach dem Review am Laufende und grüner Gesamtprüfung Fast-Forward von `main` und Push. Keine PRs. |
 | E5 | Kernregeln werden per Hook immer eingespeist (blockiert nichts). Erzwungen wird nur die Prüfschleife: Stop-Hook lässt kein „fertig“ zu, wenn Code geändert wurde und kein Prüfergebnis vorliegt. |
 | E6 | Skill-Texte auf Englisch (wörtliche Übernahmen bleiben wörtlich), Antworten an den User auf Deutsch. |
 | E7 | Den Stack selbst messen (Ponytail-Benchmark-Methode) kommt in einer späteren Phase. |
@@ -60,7 +60,7 @@ Projektordner. Veröffentlichen später = Repo öffentlich machen.
   Deletion-Test, „ein Adapter = hypothetische Nahtstelle, zwei = echte“).
 - Prinzipien: `core/PRINCIPLES.md`, Index nach pstack-Art (22 Prinzipien, je „wann“ + Regel). Nicht
   dauerhaft geladen; der Hook gibt Haupt-Chat und Subagents den absoluten Pfad, gelesen wird bei
-  nicht-trivialer Arbeit. Build the Lever prüft zusätzlich der Reviewer, Encode Lessons in Structure
+  nicht-trivialer Arbeit. Build the Lever prüft zusätzlich `/code-review`, Encode Lessons in Structure
   setzt `/retro` mit der Tabelle Regel → Erzwinger um.
 - Worker-Regeln: pstack `worker.md`, erste Zeile jedes Headless-Prompts.
 - Lauf-Log: pstack `show-me-your-work` (TSV, append-only, `log.sh`).
@@ -115,18 +115,20 @@ Ohne Spec: erst `/grill` und `/spec`.
 
 | Rolle | Aufgabe | Läuft als |
 |---|---|---|
-| Orchestrator-Chat | Liest Spec, plant Reihenfolge, startet Worker und Prüf-Chats, merged, meldet sich beim User | normale Session, per Remote Control auf dem Handy |
-| Worker-Chat | Ein Schritt bzw. Baustein, Prüfschleife bis grün | `claude -p`, eigener Worktree |
-| Prüf-Chat | Hat den Code nicht geschrieben; führt die Prüfbefehle selbst aus, vergleicht mit der Spec; Ergebnis PASS / ISSUES / BLOCKED; überwacht den Lauf | `claude -p` nach jedem Schritt |
+| Orchestrator-Chat | Liest Spec, startet die Engine, meldet sich beim User | normale Session, per Remote Control auf dem Handy |
+| Worker-Chat | Ein Schritt bzw. Baustein, Prüfschleife bis grün; rote Tore der Engine kommen in dieselbe Session zurück | `claude -p`, eigener Worktree, `--resume` |
+| Review-Chat | `/code-review` (Pocock, drei Achsen) über den ganzen Lauf-Diff, ändert nichts | `claude -p` einmal nach dem letzten Merge |
+| Fix-Chat | Setzt die belegten Befunde und `/simplify` um, eine Runde | `claude -p` nur ohne `Verdict: ship` |
 
 ### Turbo-Ablauf
 
 ```
 Spec ─► Bausteine + Abhängigkeitsgraph
-         ├─ A ─► Worker (Worktree A) ─► Prüf-Chat ─► PASS ─┐
-         ├─ B ─► Worker (Worktree B) ─► Prüf-Chat ─► PASS ─┼─► Merge ─► Gesamtprüfung ─► Push ─► Push-Nachricht
-         ├─ C ─► Worker (Worktree C) ─► Prüf-Chat ─► ISSUES ─► neuer Worker mit Befund (max. 2×, dann BLOCKED)
+         ├─ A ─► Worker (Worktree A) ─► Tore grün ─► Merge ─┐
+         ├─ B ─► Worker (Worktree B) ─► Tor rot ─► dieselbe Session fixt weiter ─► Merge ─┤
+         ├─ C ─► Worker (Worktree C) ─► BLOCKED oder Stillstand ─► Halt, braucht den User
          └─ D (braucht A) ─► startet nach Merge von A
+alle gemerged ─► /code-review ─► Fix-Worker (/simplify) ─► Gesamtprüfung (Checks + Verify) ─► Push ─► Push-Nachricht
 ```
 
 Bausteine entstehen auch innerhalb eines Schritts: Ein nur lesender Planer (`core/planner.md`) zerlegt jeden
@@ -142,9 +144,10 @@ rot, beendet ein Worker den Schritt. Kritischer Pfad vorher/nachher steht in Log
 - Ein fest gescripteter Ablauf trifft die Orchestrierungsentscheidungen, nicht ein Agent.
   Begründung: Pocock implement-spec, „deterministic loop is faster, cheaper, and more reliable“.
 - Der Orchestrator glaubt keinem Statustext. Er prüft Seiteneffekte: Diff, Prüfbefehl, Commit-SHA.
-- Grenzen: Laufzeit, Versuche (2 pro Schritt). Bei Verstoß: Halt + Push. Keine Diff-Größen-Grenze (wie pstack):
-  ob ein Diff über den Schritt hinausgeht, beurteilt der Reviewer.
-- Ein Ergebnis ohne die geforderten Belege (SHA, Methode) gilt nicht. Ein Neustart, danach BLOCKED.
+- Grenzen: Laufzeit pro Aufruf. Keine Versuchsgrenze: Ein Schritt läuft, bis seine Tore grün sind. Er hält nur,
+  wenn er den User braucht (BLOCKED, Kontext voll, eine Runde ohne neuen Commit).
+  Keine Diff-Größen-Grenze (wie pstack): ob ein Diff über den Schritt hinausgeht, beurteilt `/code-review` am Ende.
+- Ein Ergebnis ohne die geforderten Belege (Commit, grüner Prüfbefehl) gilt nicht; die Engine prüft sie selbst.
 - Das Prüfziel wird nie gelockert, um „fertig“ melden zu können.
 - Worker spawnen keine weiteren Agents (Rekursionsschutz liegt im Orchestrator-Code).
 - Briefs werden als Datei übergeben, nicht per Shell interpoliert.

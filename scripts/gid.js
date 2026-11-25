@@ -1,5 +1,5 @@
 // /tstack:get-it-done engine: runs the auto steps of a spec in worktrees with fresh headless workers,
-// checks each step itself, has a separate reviewer judge it, merges into an integration branch and
+// checks each step itself, merges into an integration branch and
 // finally fast-forwards the base branch. A program makes every orchestration decision, not an agent.
 //
 // Usage: node gid.js <spec.md> [--turbo] [-j 4] [--no-push] [--timeout-min 30] [--resume <run id>]
@@ -20,7 +20,6 @@ const specArg = argv[0];
 if (!specArg) { console.error('usage: node gid.js <spec.md> [--turbo] [-j N] [--no-push]'); process.exit(2); }
 
 const CORE = path.join(__dirname, '..', 'core');
-const MAX_ATTEMPTS = 2;
 
 // ---------- shell helpers ----------
 const env = { ...process.env, CI: 'true' };
@@ -109,6 +108,12 @@ const count = (id, res, kind) => {
   cost[kind] += res.total_cost_usd || 0;
   return tokensOf(res);
 };
+// A resumed `claude -p` session reports usage and cost summed over the whole session; this is the last call's share.
+const since = (res, before) => ({ ...res, total_cost_usd: (res.total_cost_usd || 0) - (before.total_cost_usd || 0),
+  modelUsage: Object.fromEntries(Object.entries(res.modelUsage || {}).map(([m, u]) => {
+    const b = (before.modelUsage || {})[m] || {};
+    return [m, Object.fromEntries(['inputTokens', 'outputTokens', 'cacheCreationInputTokens'].map(k => [k, (u[k] || 0) - (b[k] || 0)]))];
+  })) });
 const usd = n => Math.round(n * 10000) / 10000;
 const verificationShare = () => (cost.code + cost.verification ? cost.verification / (cost.code + cost.verification) : 0);
 
@@ -116,11 +121,13 @@ const settingsFile = path.join(runDir, 'worker-settings.json');
 fs.writeFileSync(settingsFile, JSON.stringify({ hooks: { PreCompact: [{ hooks: [{ type: 'command',
   command: `node "${path.join(__dirname, '..', 'hooks', 'context-full.js').split(path.sep).join('/')}"` }] }] } }));
 
-function claude(prompt, cwd, { readOnly = false, flag = '' } = {}) {
+const NO_EDITS = 'Edit,Write,NotebookEdit';
+const READ_ONLY = `Agent,${NO_EDITS}`;
+function claude(prompt, cwd, { deny = 'Agent', flag = '', session = '' } = {}) {
   // relative: the run dir may contain spaces, which the Windows shell would split
   const args = ['-p', '--output-format', 'json', '--strict-mcp-config', '--permission-mode', 'bypassPermissions',
     '--settings', path.relative(cwd, settingsFile).split(path.sep).join('/'),
-    '--disallowedTools', readOnly ? 'Agent,Edit,Write,NotebookEdit' : 'Agent'];
+    '--disallowedTools', deny, ...(session ? ['--resume', session] : [])];
   return new Promise(resolve => {
     // Windows: claude is an npm .cmd shim and needs a shell; no argument contains spaces or quotes.
     const p = spawn('claude', args, { cwd, shell: process.platform === 'win32', env: { ...env, TSTACK_CONTEXT_FLAG: flag } });
@@ -142,99 +149,87 @@ function claude(prompt, cwd, { readOnly = false, flag = '' } = {}) {
 // ---------- one step ----------
 const goal = spec => (spec.header.match(/^# (.*)$/m) || [])[1] || specRel;
 
+// One worker session per step. A red gate goes back into the same session until every gate is green;
+// the step stops only when it needs the user: the worker reports BLOCKED, its context is full, or a round
+// ends without a new commit and with the same red gates as the round before.
 async function runStep(step, spec, findings = '') {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const name = `${step.id}-a${attempt}`;
-    const wt = path.join(wtRoot, name);
-    const branch = `${integBranch}-${name}`;
-    const base = gitOk(integ, 'rev-parse', 'HEAD');
-    gitOk(repo, 'worktree', 'add', '-q', '-b', branch, wt, base);
-    const brief = path.join(runDir, `${name}.brief.md`);
-    fs.writeFileSync(brief, [
-      fs.readFileSync(path.join(CORE, 'worker.md'), 'utf8'),
-      `\n# Goal\n${goal(spec)} (spec: ${specRel}, read its header for context; do not edit it)\n`,
-      `# Your step\n${step.section}\n`,
-      `# Check\nThe step is done when \`${step.check}\` passes in this worktree.\n`,
-      findings && `# Findings from the previous attempt (fix these)\n${findings}\n`,
-    ].filter(Boolean).join('\n'));
-    log(step.id, attempt, 'worker', 'started', wt);
-    const flag = path.join(runDir, `${name}.context-full`);
-    const res = await claude(`Read the brief at ${brief.split(path.sep).join('/')} and follow it exactly.`, wt, { flag });
-    log(step.id, attempt, 'worker', res.is_error ? 'error' : 'finished', (res.result || '').slice(-300), count(step.id, res, 'code'));
-    if (res.is_error) incident(step.id, `worker #${attempt} ended with an error: ${(res.result || '').slice(-200)}`);
-    if (fs.existsSync(flag)) {
-      cleanup(wt, branch);
-      log(step.id, attempt, 'step', 'split: the worker ran out of context, split the step in the spec');
-      return 'split';
-    }
+  const wt = path.join(wtRoot, step.id);
+  const branch = `${integBranch}-${step.id}`;
+  gitOk(repo, 'worktree', 'add', '-q', '-b', branch, wt, gitOk(integ, 'rev-parse', 'HEAD'));
+  const brief = path.join(runDir, `${step.id}.brief.md`);
+  fs.writeFileSync(brief, [
+    fs.readFileSync(path.join(CORE, 'worker.md'), 'utf8'),
+    `\n# Goal\n${goal(spec)} (spec: ${specRel}, read its header for context; do not edit it)\n`,
+    `# Your step\n${step.section}\n`,
+    `# Check\nThe step is done when \`${step.check}\` passes in this worktree.\n`,
+    findings && `# Findings (fix these)\n${findings}\n`,
+  ].filter(Boolean).join('\n'));
+  const flag = path.join(runDir, `${step.id}.context-full`);
+  const read = `Read the brief at ${brief.split(path.sep).join('/')} and follow it exactly.`;
+  const stop = (round, state, why) => { cleanup(wt, branch); log(step.id, round, 'step', state, why); return state; };
+  let session = '', before = null, red = '', head = '';
+  for (let round = 1; ; round++) {
+    log(step.id, round, 'worker', 'started', wt);
+    const res = await claude(red ? `${read}\nThe step is not done yet. Fix this, commit, and end with your Verdict line:\n${red}` : read, wt, { flag, session });
+    const own = before && res.session_id === session ? since(res, before) : res;
+    if (res.session_id) { session = res.session_id; before = res; }
+    log(step.id, round, 'worker', res.is_error ? 'error' : 'finished', (res.result || '').slice(-300), count(step.id, own, 'code'));
+    if (res.is_error) incident(step.id, `worker round ${round} ended with an error: ${(res.result || '').slice(-200)}`);
+    if (fs.existsSync(flag)) return stop(round, 'split', 'the worker ran out of context, split the step in the spec');
+    const blocked = (res.result || '').match(/Verdict:\s*BLOCKED\s*[–-]\s*(\S.*)/);
+    if (blocked) return stop(round, 'blocked', blocked[1]);
 
-    const { check, problems } = inspect(step, attempt, wt, base);
-    if (check.code === 0 && problems.length) incident(step.id, `attempt ${attempt} rejected although its check is green: ${problems.join(' ')}`);
-    let verdict = 'ISSUES';
-    // A worker that reports BLOCKED with a red check, or an env-gap the harness cannot test, needs the user, not another attempt.
-    if (/Verdict:\s*BLOCKED/.test(res.result || '') && (check.code !== 0 || /env-gap/.test(res.result))) {
-      verdict = 'BLOCKED';
-      problems.push((res.result || '').slice(-1500));
+    const problems = await gates(step, spec, round, wt, branch);
+    if (!problems.length) { cleanup(wt, branch); return 'done'; }
+    const now = gitOk(wt, 'rev-parse', 'HEAD');
+    red = problems.join('\n');
+    if (now === head) {
+      const why = 'stuck: no new commit since the round before';
+      incident(step.id, `step ${why}: ${red.slice(-300)}`);
+      return stop(round, 'blocked', `${why}: ${red.slice(-300)}`);
     }
-    if (!problems.length) {
-      const diffFile = path.join(runDir, `${name}.diff`);
-      fs.writeFileSync(diffFile, git(wt, 'diff', `${base}..HEAD`).out);
-      const review = await claude([
-        fs.readFileSync(path.join(CORE, 'reviewer.md'), 'utf8'),
-        `\n# Step\n${step.section}\n`,
-        `# Diff\nRead ${diffFile.split(path.sep).join('/')} (against the integration branch). The step check \`${step.check}\` passed when the program ran it.`,
-      ].join('\n'), wt, { readOnly: true });
-      const text = review.result || '';
-      verdict = ([...text.matchAll(/VERDICT:[\s*`]*(PASS|ISSUES|BLOCKED)\b/g)].pop() || [])[1];
-      if (!verdict) { verdict = 'ISSUES'; incident(step.id, `reviewer gave no VERDICT line: ${text.slice(-200)}`); }
-      log(step.id, attempt, 'review', verdict, text.slice(-300), count(step.id, review, 'verification'));
-      if (verdict !== 'PASS') problems.push(text.slice(-3000));
-    }
-
-    const cov = verdict === 'PASS' && coverage(wt);
-    if (cov && !cov.waived && !cov.ok) {
-      const vbrief = path.join(runDir, `${name}.verifier.md`);
-      fs.writeFileSync(vbrief, [
-        fs.readFileSync(path.join(CORE, 'verifier.md'), 'utf8'),
-        `\n# Goal\n${goal(spec)} (spec: ${specRel})\n`,
-        `# Your step\n${step.section}\n`,
-        `# Coverage\nRun \`node "${path.join(__dirname, 'verify-coverage.js').split(path.sep).join('/')}" .\` in this worktree. Gaps now:\n${gaps(cov).join('\n') || 'none'}\n`,
-      ].join('\n'));
-      log(step.id, attempt, 'verifier', 'started', wt);
-      const vres = await claude(`Read the brief at ${vbrief.split(path.sep).join('/')} and follow it exactly.`, wt);
-      log(step.id, attempt, 'verifier', vres.is_error ? 'error' : 'finished', (vres.result || '').slice(-300), count(step.id, vres, 'verification'));
-      if (vres.is_error) incident(step.id, `verifier #${attempt} ended with an error: ${(vres.result || '').slice(-200)}`);
-      const again = inspect(step, attempt, wt, base).problems;
-      const after = coverage(wt);
-      if (!after.ok) again.push(`- Verification coverage is red after the verifier:\n${gaps(after).join('\n')}`);
-      if (again.length) {
-        verdict = 'ISSUES';
-        problems.push(...again);
-        log(step.id, attempt, 'verifier', 'rejected', again.join(' '));
-      }
-    }
-
-    if (verdict === 'PASS') {
-      const merge = git(integ, 'merge', '--no-ff', '-q', '-m', `${step.id}: ${step.title}`, branch);
-      const after = merge.code === 0 ? checkInteg(step.check) : merge;
-      if (merge.code === 0 && after.code === 0) {
-        if (!step.part) markDone(step.id);
-        log(step.id, attempt, 'merge', 'merged', gitOk(integ, 'rev-parse', '--short', 'HEAD'));
-        cleanup(wt, branch);
-        return 'done';
-      }
-      if (merge.code === 0) gitOk(integ, 'reset', '-q', '--hard', 'HEAD~1'); else git(integ, 'merge', '--abort');
-      problems.push(`- After merging into the integration branch: ${after.out.slice(-1500)}`);
-      log(step.id, attempt, 'merge', 'rejected', after.out.slice(-200));
-      incident(step.id, `merge into the integration branch rejected: ${after.out.slice(-200)}`);
-    }
-    cleanup(wt, branch);
-    if (verdict === 'BLOCKED') { log(step.id, attempt, 'step', 'blocked', (res.result || '').match(/env-gap.*/)?.[0] || ''); return 'blocked'; }
-    findings = problems.join('\n');
+    head = now;
   }
-  log(step.id, '', 'step', `failed after ${MAX_ATTEMPTS} attempts`);
-  incident(step.id, `step failed after ${MAX_ATTEMPTS} attempts: ${findings.slice(-300)}`);
-  return 'failed';
+}
+
+// The objective gates of a step: commit, check, untouched rules, coverage (a verifier closes gaps), check after
+// the merge. Returns the red ones; none means the step is merged.
+async function gates(step, spec, round, wt, branch) {
+  const base = gitOk(wt, 'merge-base', 'HEAD', integBranch);
+  const { check, problems } = inspect(step, round, wt, base);
+  if (check.code === 0 && problems.length) incident(step.id, `round ${round} rejected although its check is green: ${problems.join(' ')}`);
+  if (problems.length) return problems;
+
+  const cov = coverage(wt);
+  if (!cov.waived && !cov.ok) {
+    const vbrief = path.join(runDir, `${step.id}-r${round}.verifier.md`);
+    fs.writeFileSync(vbrief, [
+      fs.readFileSync(path.join(CORE, 'verifier.md'), 'utf8'),
+      `\n# Goal\n${goal(spec)} (spec: ${specRel})\n`,
+      `# Your step\n${step.section}\n`,
+      `# Coverage\nRun \`node "${path.join(__dirname, 'verify-coverage.js').split(path.sep).join('/')}" .\` in this worktree. Gaps now:\n${gaps(cov).join('\n') || 'none'}\n`,
+    ].join('\n'));
+    log(step.id, round, 'verifier', 'started', wt);
+    const vres = await claude(`Read the brief at ${vbrief.split(path.sep).join('/')} and follow it exactly.`, wt);
+    log(step.id, round, 'verifier', vres.is_error ? 'error' : 'finished', (vres.result || '').slice(-300), count(step.id, vres, 'verification'));
+    if (vres.is_error) incident(step.id, `verifier round ${round} ended with an error: ${(vres.result || '').slice(-200)}`);
+    const again = inspect(step, round, wt, base).problems;
+    const after = coverage(wt);
+    if (!after.ok) again.push(`- Verification coverage is red after the verifier:\n${gaps(after).join('\n')}`);
+    if (again.length) { log(step.id, round, 'verifier', 'rejected', again.join(' ')); return again; }
+  }
+
+  const merge = git(integ, 'merge', '--no-ff', '-q', '-m', `${step.id}: ${step.title}`, branch);
+  const after = merge.code === 0 ? checkInteg(step.check) : merge;
+  if (merge.code === 0 && after.code === 0) {
+    if (!step.part) markDone(step.id);
+    log(step.id, round, 'merge', 'merged', gitOk(integ, 'rev-parse', '--short', 'HEAD'));
+    return [];
+  }
+  if (merge.code === 0) gitOk(integ, 'reset', '-q', '--hard', 'HEAD~1'); else git(integ, 'merge', '--abort');
+  log(step.id, round, 'merge', 'rejected', after.out.slice(-200));
+  incident(step.id, `merge into the integration branch rejected: ${after.out.slice(-200)}`);
+  return [`- After merging into the integration branch \`${integBranch}\` (merge it into your branch and resolve): ${after.out.slice(-1500)}`];
 }
 // Turbo: all parts of a split step are merged. The step's own check decides; red → one worker finishes the step.
 async function joinStep(step, spec) {
@@ -246,6 +241,47 @@ async function joinStep(step, spec) {
   return 'done';
 }
 
+// Once all steps are merged: one /tstack:code-review over the run's diff, then one worker applies its cited
+// findings with /tstack:simplify. Returns the fix's red rule gates; the final check then decides whether the run lands.
+const REVIEW_SKILL = path.join(__dirname, '..', 'skills/code-review');
+const SIMPLIFY_SKILL = path.join(__dirname, '..', 'skills/simplify');
+const slash = p => p.split(path.sep).join('/');
+async function reviewRun(spec, from) {
+  const res = await claude([
+    fs.readFileSync(path.join(REVIEW_SKILL, 'SKILL.md'), 'utf8'),
+    `\n# This run\nYou run headless at the end of a /tstack:get-it-done run; nobody answers questions and you edit no file. Fixed point: ${from}. Spec: ${specRel}. The files the skill links are in ${slash(REVIEW_SKILL)}.`,
+  ].join('\n'), integ, { deny: NO_EDITS });
+  const text = res.result || '';
+  const file = path.join(runDir, 'review.md');
+  fs.writeFileSync(file, text);
+  const ship = /Verdict:\s*ship\b/i.test(text);
+  log('run', '', 'review', res.is_error ? 'error' : ship ? 'ship' : 'fix', `full review: ${slash(file)}`, count('review', res, 'verification'));
+  if (res.is_error) incident('run', `review ended with an error: ${text.slice(-200)}`);
+  if (res.is_error || ship) return [];
+
+  const brief = path.join(runDir, 'review.brief.md');
+  fs.writeFileSync(brief, [
+    fs.readFileSync(path.join(CORE, 'worker.md'), 'utf8'),
+    `\n# Goal\n${goal(spec)} (spec: ${specRel}, read its header for context; do not edit it)\n`,
+    `# Your step\n### review Fix the review findings\nApply every finding below that cites a concrete case, then clean up the run's diff (\`git diff ${from}..HEAD\`) as the simplify skill says. The files the skill links are in ${slash(SIMPLIFY_SKILL)}.\n`,
+    `# Review\n${text}\n`,
+    `# Simplify\n${fs.readFileSync(path.join(SIMPLIFY_SKILL, 'SKILL.md'), 'utf8')}`,
+  ].join('\n'));
+  const before = gitOk(integ, 'rev-parse', 'HEAD');
+  log('review', 1, 'worker', 'started', integ);
+  const fix = await claude(`Read the brief at ${slash(brief)} and follow it exactly.`, integ);
+  const result = path.join(runDir, 'fix.result.md');
+  fs.writeFileSync(result, fix.result || '');
+  log('review', 1, 'worker', fix.is_error ? 'error' : 'finished', `result: ${slash(result)}`, count('review', fix, 'code'));
+  if (fix.is_error) incident('run', `review fix worker ended with an error: ${(fix.result || '').slice(-200)}`);
+  git(integ, 'reset', '-q', '--hard');
+  git(integ, 'clean', '-qfd');
+  const changed = git(integ, 'diff', '--name-only', `${before}..HEAD`).out.split('\n').filter(Boolean);
+  const gamed = [...new Set(spec.steps.flatMap(s => gamedCheckFiles(s.check, changed, s.touches)))];
+  const rules = changed.filter(f => [specRel, 'AGENTS.md'].includes(f));
+  return [...gamed.map(f => `the review fix edits the check file ${f}`), ...rules.map(f => `the review fix edits ${f}, which only the user changes`)];
+}
+
 // Turbo: a read-only planner splits steps into parts; the engine keeps only splits that hold up.
 // The raw plan is kept in the run dir, so --resume runs the same parts.
 async function planRun(spec) {
@@ -255,7 +291,7 @@ async function planRun(spec) {
   if (fs.existsSync(file)) raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   else if (open.length) {
     const res = await claude([fs.readFileSync(path.join(CORE, 'planner.md'), 'utf8'),
-      `\n# Spec\n${specRel}. Open auto steps: ${open.map(s => s.id).join(', ')}.`].join('\n'), integ, { readOnly: true });
+      `\n# Spec\n${specRel}. Open auto steps: ${open.map(s => s.id).join(', ')}.`].join('\n'), integ, { deny: READ_ONLY });
     const json = [...(res.result || '').matchAll(/```json\s*([\s\S]*?)```/g)].pop();
     try { raw = JSON.parse(json[1]); } catch { incident('plan', `planner gave no readable plan: ${(res.result || '').slice(-200)}`); }
     log('plan', '', 'planner', res.is_error ? 'error' : 'finished', (res.result || '').slice(-300), count('plan', res, 'code'));
@@ -282,7 +318,7 @@ function inspect(step, attempt, wt, base) {
   if (!commits) problems.push('- No commit on the step branch: commit your changes.');
   if (check.code !== 0) problems.push(`- Check \`${step.check}\` fails:\n${check.out.slice(-1500)}`);
   // Anti-gaming: the check is fixed by the spec. A diff that edits a file the check command names is rejected,
-  // unless the step may touch it ("Berührt"); the reviewer judges those edits.
+  // unless the step may touch it ("Berührt"); the review at the end of the run judges those edits.
   const changed = git(wt, 'diff', '--name-only', `${base}..HEAD`).out.split('\n').filter(Boolean);
   const checkFiles = gamedCheckFiles(step.check, changed, step.touches);
   if (checkFiles.length) problems.push(`- The diff edits the step's check (${checkFiles.join(', ')}). Never change the check; change the code.`);
@@ -337,7 +373,7 @@ function cleanup(wt, branch) {
     process.exit(2);
   }
 
-  const state = {}; // unit id (step or part) -> running | done | failed | blocked | split | manual
+  const state = {}; // unit id (step or part) -> running | done | blocked | split | manual
   const plan = turbo ? await planRun(before) : {};
   const parts = Object.values(plan).flat();
   const merged = fs.readFileSync(logFile, 'utf8');
@@ -373,6 +409,10 @@ function cleanup(wt, branch) {
   if (!notDone.length) {
     const sync = git(integ, 'merge', '-q', '--no-edit', baseBranch);
     if (sync.code) { git(integ, 'merge', '--abort'); finalCheck = { code: 1, out: `merging ${baseBranch} into the run failed: ${sync.out}` }; }
+    else {
+      const red = await reviewRun(spec, gitOk(integ, 'merge-base', baseBranch, 'HEAD'));
+      if (red.length) finalCheck = { code: 1, out: red.join('; ') };
+    }
     const checks = [...spec.steps.map(s => s.check), isWaiver(verify) ? '' : verify].filter(Boolean);
     for (const c of finalCheck.code ? [] : checks) { finalCheck = checkInteg(c); if (finalCheck.code) { finalCheck.out = `${c}: ${finalCheck.out}`; break; } }
     const cov = finalCheck.code ? null : coverage(integ);

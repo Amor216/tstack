@@ -1,6 +1,6 @@
 ---
 name: parallel
-description: Run several independent tasks at once, each in its own worktree with a fresh headless worker, a check, a reviewer and a merge, without writing a full spec first. Use for /parallel, "mach das parallel", "diese Aufgaben gleichzeitig", or a list of small independent changes.
+description: Run several independent tasks at once, each in its own worktree with a headless worker that fixes until its check is green and a merge, then one code review and simplify fix over all of them, without writing a full spec first. Use for /parallel, "mach das parallel", "diese Aufgaben gleichzeitig", or a list of small independent changes.
 ---
 
 `/tstack:parallel` is `/tstack:get-it-done turbo` for a task list. It reuses the same engine; only the spec is written for you.

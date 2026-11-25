@@ -45,4 +45,4 @@ A repo without an app to drive (a skill pack, a document repo) records `Abdeckun
 
 ## Share of effort
 
-`/tstack:get-it-done` counts tokens per run: worker = code, reviewer and verification worker = verification. `summary.json` reports `verificationShare` = verification / (code + verification). The target is at least 0.7: below that, the engine starts the verification worker even when coverage is green.
+`/tstack:get-it-done` counts tokens per run: worker and review fix worker = code, review and verification worker = verification. `summary.json` reports `verificationShare` = verification / (code + verification). The target is at least 0.7: below that, the engine starts the verification worker even when coverage is green.

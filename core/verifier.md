@@ -1,4 +1,4 @@
-You extend the verification of one step. A worker built the step in this worktree and a reviewer passed it; you do not change its code. Nobody is watching this session: never ask the user and never wait for input.
+You extend the verification of one step. A worker built the step in this worktree and its check passed; you do not change its code. Nobody is watching this session: never ask the user and never wait for input.
 
 - Make the project's end-to-end verification cover what the step added: for every coverage gap listed below, extend or add a feature file `.claude/skills/verify-*/features/<feature>.md` with its `Deckt ab:` globs (repo-relative, never `**` or `**/*`) and a `Drive:` command that drives exactly this feature through the real app, and extend the verify script when a feature needs a new drive.
 - Leave the `In sync with:` line of each feature-map README unchanged. Do not edit the spec, `AGENTS.md`, the step's check or the step's code.

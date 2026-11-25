@@ -57,7 +57,7 @@ function setupMap(cover = '`src/none.js`') {
 
 function gid({ repo, bin, list }, env = {}, ...extra) {
   const r = spawnSync('node', [GID, 'specs/99.md', '--no-push', ...extra], { cwd: repo, encoding: 'utf8',
-    env: { ...process.env, CI: '', FAKE_FAIL: '', FAKE_COMPACT: '', FAKE_EDIT: '', FAKE_VERDICT: '', FAKE_NEED: '', FAKE_VERIFY: '', FAKE_PLAN: '', TSTACK_INCIDENTS: list, ...env,
+    env: { ...process.env, CI: '', FAKE_FAIL: '', FAKE_COMPACT: '', FAKE_EDIT: '', FAKE_NEED: '', FAKE_VERIFY: '', FAKE_PLAN: '', FAKE_RED: '', FAKE_RED_ID: '', FAKE_BLOCK: '', FAKE_REVIEW: '', FAKE_FIX_EDIT: '', FAKE_RUN: String(Math.random()), TSTACK_INCIDENTS: list, ...env,
       PATH: bin + path.delimiter + process.env.PATH } });
   const runs = path.join(repo, '.tstack', 'runs');
   const id = fs.readdirSync(runs).sort().pop();
@@ -71,7 +71,7 @@ test('a run records tokens per step and in total, and workers run with CI=true',
   const r = gid(ctx);
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(r.summary.steps, { S1: 'done', S2: 'done' });
-  assert.deepEqual(r.summary.tokens, { S1: 150, S2: 150, total: 300, code: 200, verification: 100 });
+  assert.deepEqual(r.summary.tokens, { S1: 100, S2: 100, review: 50, total: 250, code: 200, verification: 50 });
   assert.doesNotMatch(r.log, /\tverifier\t/);
   assert.equal(r.log.split('\n')[0].split('\t').pop(), 'tokens');
   assert.match(r.log, /\tworker\tfinished\t[^\n]*\t100\n/);
@@ -82,7 +82,7 @@ test('--resume continues a stopped run on its integration branch without redoing
   const ctx = setup();
   const first = gid(ctx, { FAKE_FAIL: 'S2' });
   assert.equal(first.code, 1);
-  assert.deepEqual(first.summary.steps, { S1: 'done', S2: 'failed' });
+  assert.deepEqual(first.summary.steps, { S1: 'done', S2: 'blocked' });
   const second = gid(ctx, {}, '--resume', first.id);
   assert.equal(second.id, first.id);
   assert.equal(second.code, 0, second.out);
@@ -114,13 +114,87 @@ test('preflight stops before any worker when a check is already green, a depende
   assert.match(problems, /S2: .*Berührt/);
 });
 
-test('a failed step is recorded as an open incident in the improvement list', () => {
+test('a stuck step is recorded as an open incident in the improvement list', () => {
   const ctx = setup();
   const r = gid(ctx, { FAKE_FAIL: 'S1' });
   assert.equal(r.code, 1);
   const list = fs.readFileSync(ctx.list, 'utf8');
   const open = list.slice(list.indexOf('## Offen'), list.indexOf('## Erledigt'));
-  assert.match(open, /- \[ \] alt\n- \[ \] \[auto \d{4}-\d\d-\d\d repo\/\d{14} S1\] step failed after 2 attempts: .*fails/);
+  assert.match(open, /- \[ \] alt\n- \[ \] \[auto \d{4}-\d\d-\d\d repo\/\d{14} S1\] step stuck: no new commit since the round before: .*fails/);
+});
+
+test('a step runs one worker session and no reviewer of its own', () => {
+  const ctx = setup();
+  const argsLog = path.join(ctx.repo, '..', 'args.log');
+  const r = gid(ctx, { FAKE_ARGS: argsLog });
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.log, /\tS\d\t\d*\treview\t/);
+  assert.equal(fs.readFileSync(argsLog, 'utf8').trim().split('\n').length, 3);
+});
+
+test('after the last merge one code review runs, its full text is kept, and its findings go to one simplify fix worker before the final check', () => {
+  const ctx = setup();
+  const review = '## Standards\n- S1.txt:1: narrating comment → delete it\n\nVerdict: fix 1 first';
+  const r = gid(ctx, { FAKE_REVIEW: review });
+  assert.equal(r.code, 0, r.out + r.log);
+  const at = s => r.log.indexOf(s);
+  assert.ok(at('\tS2\t1\tmerge\tmerged') < at('\trun\t\treview\t'), r.log);
+  assert.ok(at('\trun\t\treview\t') < at('\treview\t1\tworker\tstarted'), r.log);
+  assert.ok(at('\treview\t1\tworker\tfinished') < at('\trun\t\tfinal check\tgreen'), r.log);
+  assert.equal((r.log.match(/\trun\t\treview\t/g) || []).length, 1);
+  assert.equal((r.log.match(/\treview\t\d+\tworker\tstarted/g) || []).length, 1);
+  const runDir = path.join(ctx.repo, '.tstack', 'runs', r.id);
+  assert.equal(fs.readFileSync(path.join(runDir, 'review.md'), 'utf8'), review);
+  const brief = fs.readFileSync(path.join(runDir, 'review.brief.md'), 'utf8');
+  assert.ok(brief.includes(review) && brief.includes('Tstack simplify'), brief);
+  assert.match(r.log, /\trun\t\treview\tfix\t[^\n]*review\.md/);
+  assert.ok(fs.existsSync(path.join(ctx.repo, 'review.txt')));
+});
+
+test('a review that ends with Verdict: ship starts no fix worker', () => {
+  const r = gid(setup());
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.log, /\trun\t\treview\tship\t/);
+  assert.doesNotMatch(r.log, /\treview\t\d+\tworker\t/);
+});
+
+test('a fix worker that turns the project verification red does not land', () => {
+  const ctx = setup(spec, { 'AGENTS.md': 'Verify: `test ! -f review.txt`\nAbdeckung: keine – Test\n' });
+  const r = gid(ctx, { FAKE_REVIEW: '- S1.txt:1: x → y\n\nVerdict: fix 1 first' });
+  assert.equal(r.code, 1, r.out);
+  assert.equal(r.summary.landed, false);
+  assert.match(r.log, /\trun\t\tfinal check\tred\t/);
+  assert.ok(!fs.existsSync(path.join(ctx.repo, 'review.txt')));
+});
+
+test('a red gate resumes the same worker session until the step is green, without a fresh attempt', () => {
+  const ctx = setup();
+  const counter = path.join(ctx.repo, '..', 'red.txt');
+  fs.writeFileSync(counter, '2');
+  const argsLog = path.join(ctx.repo, '..', 'args.log');
+  const r = gid(ctx, { FAKE_RED_ID: 'S1', FAKE_RED: counter, FAKE_ARGS: argsLog });
+  assert.equal(r.code, 0, r.out + r.log);
+  assert.deepEqual(r.summary.steps, { S1: 'done', S2: 'done' });
+  const calls = fs.readFileSync(argsLog, 'utf8').trim().split('\n');
+  assert.equal(calls.filter(c => c.includes('--resume sess-S1')).length, 2);
+  assert.equal(calls.length, 5);
+  assert.equal(r.summary.tokens.S1, 300, 'a resumed session reports cumulative usage; each round counts only its own');
+});
+
+test('a step whose worker makes no new commit stops as blocked, never failed, even when the red output changes', { timeout: 120000 }, () => {
+  const changing = spec.replace('`test -f S1.txt`', '`test -f S1.txt || { node -e "console.log(Math.random().toString(36))"; false; }`');
+  const r = gid(setup(changing), { FAKE_FAIL: 'S1' });
+  assert.equal(r.summary.steps.S1, 'blocked');
+  assert.equal((r.log.match(/\tS1\t\d+\tworker\tstarted/g) || []).length, 2);
+  assert.match(r.log, /\tS1\t2\tstep\tblocked\tstuck: no new commit since the round before/);
+});
+
+test('a worker that reports BLOCKED with a reason stops the step at once, even with a green check', () => {
+  const r = gid(setup(), { FAKE_BLOCK: 'spec conflict: S1 asks for two contradicting files' });
+  assert.equal(r.summary.steps.S1, 'blocked');
+  assert.equal((r.log.match(/\tworker\tstarted/g) || []).length, 1);
+  assert.doesNotMatch(r.log, /\tmerge\t/);
+  assert.match(r.log, /\tS1\t1\tstep\tblocked\tspec conflict/);
 });
 
 test('an installed plugin copy records incidents in ~/.tstack/verbesserungen.md, creating it', () => {
@@ -163,13 +237,6 @@ test('files a check rewrites in the integration worktree never land', () => {
   assert.doesNotMatch(fs.readFileSync(path.join(ctx.repo, 'AGENTS.md'), 'utf8'), /dirty/);
 });
 
-test('a reviewer verdict in backticks or bold, followed by a core-rules Verdict line, still counts', () => {
-  const ctx = setup();
-  const r = gid(ctx, { FAKE_VERDICT: '- fine\n\n**`VERDICT: PASS`**\n\nVerdict: VERIFIED – read the diff' });
-  assert.equal(r.code, 0, r.out);
-  assert.equal((r.log.match(/\tworker\tstarted/g) || []).length, 2);
-});
-
 test('a resumed run lands even after the base branch moved, and keeps the token total', () => {
   const ctx = setup();
   const first = gid(ctx, { FAKE_FAIL: 'S2' });
@@ -178,13 +245,13 @@ test('a resumed run lands even after the base branch moved, and keeps the token 
   const second = gid(ctx, {}, '--resume', first.id);
   assert.equal(second.code, 0, second.out);
   assert.ok(fs.existsSync(path.join(ctx.repo, 'user.txt')) && fs.existsSync(path.join(ctx.repo, 'S2.txt')));
-  assert.equal(second.summary.tokens.total, 500);
+  assert.equal(second.summary.tokens.total, 450);
 });
 
 test('a worker that edits the spec or AGENTS.md is rejected', () => {
   const ctx = setup(spec.replace('`test -f S1.txt`', '`test -f S1.txt && ! grep -q weak AGENTS.md`'));
   const r = gid(ctx, { FAKE_EDIT: 'specs/99.md' });
-  assert.equal(r.summary.steps.S1, 'failed');
+  assert.equal(r.summary.steps.S1, 'blocked');
   assert.match(r.log, /specs\/99\.md/);
 });
 
@@ -208,21 +275,21 @@ test('a verifier covers the source a step added, its tokens count as verificatio
   assert.equal(r.code, 0, r.out + r.log);
   assert.match(r.log, /\tS1\t1\tverifier\tfinished\t/);
   assert.doesNotMatch(r.log, /\tS2\t1\tverifier\t/);
-  assert.deepEqual(r.summary.tokens, { S1: 350, S2: 150, total: 500, code: 200, verification: 300 });
-  assert.deepEqual(r.summary.costUsd, { code: 0.02, verification: 0.03, total: 0.05 });
-  assert.equal(r.summary.verificationShare, 0.6);
+  assert.deepEqual(r.summary.tokens, { S1: 300, S2: 100, review: 50, total: 450, code: 200, verification: 250 });
+  assert.deepEqual(r.summary.costUsd, { code: 0.02, verification: 0.025, total: 0.045 });
+  assert.equal(r.summary.verificationShare, 0.56);
   assert.match(fs.readFileSync(path.join(ctx.repo, FEATURES, 'app.md'), 'utf8'), /^Deckt ab: `src\/none\.js`, `S\*\.txt`/m);
 });
 
 test('a verifier that leaves the new source uncovered fails the step and names the file', () => {
   const r = gid(setupMap(), { FAKE_VERIFY: 'noop' });
-  assert.equal(r.summary.steps.S1, 'failed');
+  assert.equal(r.summary.steps.S1, 'blocked');
   assert.match(r.log, /\tS1\t1\tverifier\trejected\t[^\n]*nicht abgedeckt: S1\.txt/);
 });
 
 test('a verifier that edits AGENTS.md fails the step', () => {
   const r = gid(setupMap(), { FAKE_VERIFY: 'agents' });
-  assert.equal(r.summary.steps.S1, 'failed');
+  assert.equal(r.summary.steps.S1, 'blocked');
   assert.match(r.log, /\tverifier\trejected\t[^\n]*AGENTS\.md/);
 });
 
@@ -238,9 +305,9 @@ test('every headless call starts without MCP servers, and cached re-reads do not
   const r = gid(ctx, { FAKE_ARGS: argsLog });
   assert.equal(r.code, 0, r.out);
   const calls = fs.readFileSync(argsLog, 'utf8').trim().split('\n');
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 3);
   for (const c of calls) assert.match(c, /--strict-mcp-config/);
-  assert.equal(r.summary.tokens.total, 300);
+  assert.equal(r.summary.tokens.total, 250);
 });
 
 test('preflight stops before any worker when there is neither a feature map nor a waiver', () => {
@@ -286,11 +353,25 @@ test('turbo: a failed part fails its step, and --resume keeps the plan and the m
   const ctx = setup(chainSpec());
   const first = gid(ctx, { FAKE_PLAN: twoParts(), FAKE_FAIL: 'S2.b' }, '--turbo');
   assert.equal(first.code, 1);
-  assert.deepEqual(first.summary.steps, { S1: 'done', S2: 'failed' });
+  assert.deepEqual(first.summary.steps, { S1: 'done', S2: 'blocked' });
   assert.equal(first.summary.parts['S2.a'], 'done');
   const second = gid(ctx, { FAKE_PLAN: '{}' }, '--turbo', '--resume', first.id);
   assert.equal(second.code, 0, second.out + second.log);
   const resumed = second.log.slice(second.log.lastIndexOf('\tresume\t'));
   assert.doesNotMatch(resumed, /\tS2\.a\t\d/);
   assert.match(resumed, /\tS2\.b\t1\tworker\tstarted/);
+});
+
+test('the review fix worker passes the same rule gates as a step: an edit to AGENTS.md does not land', () => {
+  const ctx = setup();
+  const r = gid(ctx, { FAKE_REVIEW: '- S1.txt:1: x → y\n\nVerdict: fix 1 first', FAKE_FIX_EDIT: 'AGENTS.md' });
+  assert.equal(r.summary.landed, false);
+  assert.match(r.log, /\trun\t\tfinal check\tred\t[^\n]*AGENTS\.md/);
+  assert.doesNotMatch(fs.readFileSync(path.join(ctx.repo, 'AGENTS.md'), 'utf8'), /weak/);
+});
+
+test('a review that ends with an error starts no fix worker', () => {
+  const r = gid(setup(), { FAKE_REVIEW: 'crash' });
+  assert.match(r.log, /\trun\t\treview\terror\t/);
+  assert.doesNotMatch(r.log, /\treview\t\d+\tworker\t/);
 });
