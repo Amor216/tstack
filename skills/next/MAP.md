@@ -57,5 +57,5 @@ Long runs leave the user free: say so and recommend what they can do meanwhile.
 
 ## Phase boundaries
 
-Decide continue, `/clear`, handoff file, subagent or `/compact` only between phases, in the order of
-[PHASE-BOUNDARIES.md](PHASE-BOUNDARIES.md). Mid-phase: continue, or split the rest into subagents.
+The orchestrator session manages its own context per [PHASE-BOUNDARIES.md](PHASE-BOUNDARIES.md): continue,
+delegate to subagents or headless workers, keep state in files. Never ask the user to `/clear`, `/compact` or start a new session.

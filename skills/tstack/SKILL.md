@@ -28,7 +28,7 @@ Open every subagent brief and the final report with the goal.
 - **Verification gate:** before the first step that changes code, check the project's AGENTS.md `Verify:` line and `.claude/skills/verify-*`. Missing → `/tstack:verify-setup` becomes a step of the plan, before any build. Present it, never skip it silently. Present but stale (`git log <In sync with>..HEAD` shows user-facing changes and the feature map was not touched) → `/tstack:verify-maintain` becomes a step.
 - After `/spec`, apply the map's build rule.
 - A step is done when its check passed, not when the code is written.
-- Between steps, decide context per [../next/PHASE-BOUNDARIES.md](../next/PHASE-BOUNDARIES.md). Keep clarify → fit → spec in one context.
+- You are the orchestrator and manage your own context per [../next/PHASE-BOUNDARIES.md](../next/PHASE-BOUNDARIES.md): delegate, keep state in files, never ask the user for a new session, `/clear` or `/compact`. Keep clarify → fit → spec in one context.
 - Fresh subagent for each delegated unit, with the goal, the step and file pointers, not pasted context. You own its output: read the diff and run the check yourself.
 - Two failed attempts on the same premise: report to the user before a third fix.
 

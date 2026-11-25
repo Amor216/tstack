@@ -26,7 +26,7 @@ Urteil: **W** wörtlich, **A** anpassen, **I** nur Idee.
 | PS `agents/comment-sicko.md` | A | Kommentarregel: keine Kommentare außer der Erlaubt-Liste |
 | MP `skills/productivity/writing-for-agents/SKILL.md`, `SKILL-MECHANICS.md` | W | Schreibregeln für Skills |
 | PS `skills/poteto-mode/worker.md` | W | PR-Teil → Commit + Push |
-| PS `skills/principle-*` (Auswahl) | W | prove-it-works, fix-root-causes, attack-the-premise, subtract-before-you-add, sequence-verifiable-units, test-behavior-not-implementation, boundary-discipline, model-the-domain, minimize-reader-load, make-operations-idempotent, separate-before-serializing-shared-state, build-the-lever, explain-the-number, foundational-thinking, redesign-from-first-principles, outcome-oriented-execution |
+| PS `skills/principle-*` | A | als Index `core/PRINCIPLES.md` (je „wann“ + Regel, gekürzt; Build the Lever und Laziness Protocol vollständig); Stand bis 2026-11-25 war nur Prove It Works wirklich übernommen. Enthalten: laziness-protocol, guard-the-context-window, never-block-on-the-human, encode-lessons-in-structure, type-system-discipline, migrate-callers-then-delete-legacy-apis, prove-it-works, fix-root-causes, attack-the-premise, subtract-before-you-add, sequence-verifiable-units, test-behavior-not-implementation, boundary-discipline, model-the-domain, minimize-reader-load, make-operations-idempotent, separate-before-serializing-shared-state, build-the-lever, explain-the-number, foundational-thinking, redesign-from-first-principles, outcome-oriented-execution |
 | PS `skills/show-me-your-work/` (SKILL, `scripts/log.sh`, TSV-Vorlage) | W | Lauf-Log; Transkript-Pfad `~/.claude/projects/` |
 | PS `skills/unslop/SKILL.md`, `technical-writing/SKILL.md` | A | Prosa-Regeln; Englisch-spezifische Regeln beachten |
 | MP `skills/misc/git-guardrails-claude-code/` | A | Muster für PreToolUse-Hook; `git push` nicht blockieren |
@@ -55,7 +55,7 @@ Urteil: **W** wörtlich, **A** anpassen, **I** nur Idee.
 | `/tdd` | MP `engineering/tdd/` inkl. `tests.md`, `mocking.md` (W), PS `tdd` (W), PS `principle-test-behavior-not-implementation` (W) |
 | `/parallel` | wie `/get-it-done turbo` |
 | `/prototype` | MP `engineering/prototype/` inkl. `LOGIC.md`, `UI.md` (W), PS `playbooks/prototype.md` (W) |
-| `/next` | MP `engineering/ask-matt` (A), `PHASE-BOUNDARIES.md` (W), PS `poteto-help/` inkl. `references/recipes.md` (A) |
+| `/next` | MP `engineering/ask-matt` (A), `PHASE-BOUNDARIES.md` (A: Orchestrator verwaltet den Kontext selbst, keine /clear-/compact-Bitten an den User), PS `poteto-help/` inkl. `references/recipes.md` (A) |
 | `/leichtbau` | PT `skills/ponytail` (W), `ponytail-debt` (W), PT `examples/` (I) |
 | `/workspace` | bestehendes `~/.claude/skills/new-project` |
 | `/feature-design` | MP grilling-Mechanik, MP `in-progress/loop-me` (I) |

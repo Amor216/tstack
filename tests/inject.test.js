@@ -31,3 +31,11 @@ test('session start names open automatic incidents so the session offers to fix 
   fs.writeFileSync(list, '## Offen\n\n- [ ] von Hand\n');
   assert.doesNotMatch(context('SessionStart', list), /Vorfälle/);
 });
+
+test('main thread and subagents get the absolute path of the principles index, which lists Build the Lever', () => {
+  for (const event of ['SessionStart', 'SubagentStart']) {
+    const file = context(event, '').match(/Principles index: (.+PRINCIPLES\.md)/)[1];
+    assert.ok(path.isAbsolute(file));
+    assert.match(fs.readFileSync(file, 'utf8'), /Build the Lever/);
+  }
+});

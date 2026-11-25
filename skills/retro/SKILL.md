@@ -1,6 +1,6 @@
 ---
 name: retro
-description: Retrospective on a session or a /get-it-done run: find what slowed the agent down or let mistakes through, and turn each lesson into the strongest fix (architecture, types, automated check, test, rules last). Proposes, applies after approval. Use for /retro, "Retro", "was lernen wir daraus", "reflect", after a bug or a run that went sideways.
+description: Retrospective on a session or a /get-it-done run: find what slowed the agent down or let mistakes through, and turn each lesson into the strongest fix (architecture, types, automated check, test, rules last). Proposes, applies after approval. Use for /retro, "Retro", "was lernen wir daraus", "reflect", after a bug or a run that went sideways, and whenever the user corrects the same mistake a second time.
 ---
 
 You improve the agent's **environment**, not the code, so the next run goes better. Write agent-facing text positive and concrete; a sentence whose deletion changes nothing is cut.
@@ -24,5 +24,9 @@ Look for: corrections the user gave, mistakes a check could have caught, facts t
 ## 4. Propose, then apply
 
 Present the candidates ordered by severity: problem, evidence (file:line or transcript excerpt), the level and the exact change, and why a higher level does not work; then the rejected ideas with the reason. In a subagent or `claude -p` run: propose only, apply nothing. Otherwise wait for approval, then apply one commit per fix and prove each new check fails on the real past mistake.
+
+## 5. Keep the rule table
+
+The project's AGENTS.md keeps one table `| Regel | erzwungen durch |`, one row per rule with the check, type, hook or test that makes it fail (`–` if nothing does). Add a row for every applied fix. A correction whose rule already has a row with `–` is a repeat: fix it at a higher level in the same change. Drop a row once its mistake cannot happen anymore.
 
 Reply: the applied fixes with their proof, what was rejected, and what stays open.

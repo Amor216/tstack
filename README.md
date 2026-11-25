@@ -15,6 +15,14 @@ Turn on auto-update in `/plugin` → Marketplaces → `tstack`, or update by han
 
 Needs Node 22.18 or later and Git (Git Bash on Windows).
 
+The orchestrator session manages its own context: it delegates to subagents and headless workers and never
+asks you for a new session. As a safety net, let Claude Code compact earlier than the default ~967k by adding
+this to `~/.claude/settings.json`:
+
+```json
+{ "autoCompactWindow": 400000 }
+```
+
 ## Start
 
 `/tstack:tstack <goal>` picks the flow and runs the skills in order. `/tstack:next` only recommends the next

@@ -6,7 +6,8 @@ const path = require('path');
 
 const event = process.argv[2];
 try {
-  let context = fs.readFileSync(path.join(__dirname, '..', 'core', 'rules.md'), 'utf8');
+  let context = fs.readFileSync(path.join(__dirname, '..', 'core', 'rules.md'), 'utf8') +
+    `\n\nPrinciples index: ${path.join(__dirname, '..', 'core', 'PRINCIPLES.md')} – read it when you start non-trivial work and apply every entry whose "when" matches.`;
   const homeList = path.join(__dirname, '..', '..', 'tstack-verbesserungen');
   const list = process.env.TSTACK_INCIDENTS || (fs.existsSync(homeList) ? path.join(homeList, 'verbesserungen.md') : path.join(require('os').homedir(), '.tstack', 'verbesserungen.md'));
   const open = event === 'SessionStart' && fs.existsSync(list) ? (fs.readFileSync(list, 'utf8').match(/^- \[ \] \[auto /gm) || []).length : 0;

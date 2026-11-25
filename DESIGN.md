@@ -58,9 +58,10 @@ Projektordner. Veröffentlichen später = Repo öffentlich machen.
   Abhängigkeit → Einzeiler → Minimum; `shortcut:`-Marker; Never-cut-Liste; Aufrufer zuerst greppen).
 - Modul-Vokabular: Pocock `codebase-design` (module, interface, depth, seam, adapter, leverage, locality,
   Deletion-Test, „ein Adapter = hypothetische Nahtstelle, zwei = echte“).
-- Prinzipien: Auswahl aus pstack (prove-it-works, fix-root-causes, subtract-before-you-add,
-  sequence-verifiable-units, test-behavior-not-implementation, boundary-discipline, model-the-domain …),
-  jedes mit „wann“-Satz.
+- Prinzipien: `core/PRINCIPLES.md`, Index nach pstack-Art (22 Prinzipien, je „wann“ + Regel). Nicht
+  dauerhaft geladen; der Hook gibt Haupt-Chat und Subagents den absoluten Pfad, gelesen wird bei
+  nicht-trivialer Arbeit. Build the Lever prüft zusätzlich der Reviewer, Encode Lessons in Structure
+  setzt `/retro` mit der Tabelle Regel → Erzwinger um.
 - Worker-Regeln: pstack `worker.md`, erste Zeile jedes Headless-Prompts.
 - Lauf-Log: pstack `show-me-your-work` (TSV, append-only, `log.sh`).
 - Schreibregeln für Skills und Doku: Pocock `writing-for-agents` + pstack `unslop`.
