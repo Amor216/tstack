@@ -8,7 +8,7 @@ description: Build a project's end-to-end verification environment: a project-lo
 
 Built once per project. If AGENTS.md already has a `Verify:` line and `.claude/skills/verify-*/features/README.md` exists, do not build a second one: run `/tstack:verify-maintain` instead. A partial setup (only `DESIGN.md`) is resumed here.
 
-This skill generates a scripted way to drive the real app and prove behavior (launch it, exercise a feature the way a user would, capture evidence) as a project-local skill (`.claude/skills/verify-<app>/`) tailored to the repo. Write it for an agent that reads it cold, mid-task, never having seen the app.
+This skill generates a scripted way to drive the real app and prove behavior as a project-local skill (`.claude/skills/verify-<app>/`) tailored to the repo. Write it for an agent that reads it cold and never saw the app.
 
 ## 1. Facts from the repo, decisions with the user
 
@@ -40,7 +40,7 @@ Write `.claude/skills/verify-<app>/SKILL.md` with YAML frontmatter (`name: verif
 
 ## 3. Seed the feature map
 
-Create `.claude/skills/verify-<app>/features/README.md` plus one file per user-facing feature you can identify (aim for the top 3-5 to start, from routes, commands, menus, or docs). Follow the shape in [`references/feature-map-example/`](references/feature-map-example/), with a README index and one file per feature. Each file answers, from the user's point of view: what the feature is, how to reach it, how to drive it with the harness, and what observable end state proves it works. Start the README with `In sync with: <commit sha>` (the commit the map describes). The four H2s are `Sub-features`, `How to get to it (user POV)`, `Driving it with <harness>`, and `Gotchas`. If the seed data lacks a precondition that a journey needs, the journey reports a failure and the reason goes in that feature's `Gotchas`. Never weaken the journey to make it pass. The map is the repo's maintained verification source; a proof that drives one convenient entry point is incomplete when the map lists others.
+Create `.claude/skills/verify-<app>/features/README.md` plus one file per user-facing feature, every one, with `Deckt ab:` and `Drive:` lines per [references/coverage.md](references/coverage.md). Follow the shape in [`references/feature-map-example/`](references/feature-map-example/), with a README index and one file per feature. Each file answers, from the user's POV: what the feature is, how to reach it, how to drive it, and what observable end state proves it works. Start the README with `In sync with: <commit sha>` (the commit the map describes). The four H2s are `Sub-features`, `How to get to it (user POV)`, `Driving it with <harness>`, and `Gotchas`. If the seed data lacks a precondition that a journey needs, the journey reports a failure and the reason goes in that feature's `Gotchas`. Never weaken the journey to make it pass. The map is the repo's maintained verification source; a proof that drives one convenient entry point is incomplete when the map lists others.
 
 ## 4. Prove the generated skill before handing it over
 
@@ -49,8 +49,9 @@ Run its own instructions end to end once: launch, doctor, drive ONE mapped featu
 ## 5. Wire it into the project
 
 - Ship one non-interactive entry point, `.claude/skills/verify-<app>/verify.<sh|ps1|py>`, that runs launch, doctor, the drive for a named feature (or all), evidence and cleanup, and exits 0 on pass and non-zero on fail. Workers and `/tstack:get-it-done` run this without a human; prove it once with a pass and once with a deliberately broken input that fails.
-- Add one line to the project's AGENTS.md: `Verify: <exact command>` so every agent finds it.
+- Add one line to the project's AGENTS.md: `Verify: <exact command>`. It drives the real app; unit tests alone do not count.
+- Done only when `verify-coverage.js` exits 0 (see coverage.md).
 
 ## 6. Offer the maintenance loop
 
-Point the user at `/tstack:verify-maintain` for keeping the map honest as the app changes. Suggest a cadence only if they ask.
+Point the user at `/tstack:verify-maintain` to keep the map honest as the app changes. Suggest a cadence only if asked.

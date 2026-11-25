@@ -1,5 +1,5 @@
-// Stop hook: blocks "done" when code changed this turn without a check run after the last edit
-// and a Verdict line. Fails open on any doubt so it never traps a session.
+// Stop hook: blocks "done" when code changed this turn without a check run after the last edit,
+// a Verdict line, or (with a feature map) green verification coverage. Fails open on any doubt so it never traps a session.
 const fs = require('fs');
 
 const DOC = /\.(md|mdx|txt|rst)$/i;
@@ -8,6 +8,7 @@ const EDIT = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const VERDICT = /Verdict:\s*(VERIFIED|NOT VERIFIED|BLOCKED)/;
 const path = require('path');
 const { gitRoot, onPrototypeBranch } = require('./git');
+const { coverage } = require('../scripts/verify-coverage');
 
 // The project's end-to-end verification command from AGENTS.md (`Verify: ...`), if any.
 function verifyCommand(cwd) {
@@ -48,7 +49,13 @@ function decide(input) {
   const shells = events.slice(lastEdit + 1).filter(b => b.type === 'tool_use' && SHELL.has(b.name)).map(b => b.input?.command || '');
   const checked = verify ? shells.some(c => runsVerify(c, verify)) : shells.length > 0;
   const lastText = events.filter(b => b.type === 'text').pop()?.text || '';
-  if (checked && VERDICT.test(lastText)) return null;
+  if (checked && VERDICT.test(lastText)) {
+    const cov = root ? coverage(root) : null;
+    if (!cov?.hasMap || cov.ok) return null;
+    const gaps = [...cov.problems, ...cov.uncovered.map(f => `not covered: ${f}`), ...cov.undriven.map(f => `no Drive: ${f}`)];
+    return `Verification coverage is red (${gaps.join('; ')}). Run /tstack:verify-maintain to extend the feature map ` +
+      'and the verify script, run the verification again, then end with a Verdict line.';
+  }
   const what = verify ? `the project's verification \`${verify}\`` : 'a check (tests, typecheck or build)';
   return 'Code changed in this turn, but ' + (checked ? 'the reply has no Verdict line' : `${what} did not run after the last edit`) +
     `. Run ${what}, fix until it passes, run it again, then end with ` +

@@ -6,7 +6,7 @@ const root = path.join(__dirname, '..');
 const errors = [];
 const check = (ok, msg) => { if (!ok) errors.push(msg); };
 
-check(fs.statSync(path.join(root, 'core/rules.md')).size <= 5500, 'core/rules.md > 5.5 KB');
+check(Buffer.byteLength(fs.readFileSync(path.join(root, 'core/rules.md'), 'utf8').replace(/\r\n/g, '\n')) <= 5500, 'core/rules.md > 5.5 KB');
 
 for (const name of fs.readdirSync(path.join(root, 'skills'))) {
   const dir = path.join(root, 'skills', name);

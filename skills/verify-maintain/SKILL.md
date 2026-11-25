@@ -28,7 +28,7 @@ Only edit the verification skill's own directory (its SKILL.md, features/, and a
 
 0. **Locate the target.** Find the verification skill to maintain: the project-local skill whose body has launch/drive sections and a feature map (usually `.claude/skills/verify-*/`). Several candidates → take the one the AGENTS.md `Verify:` line runs; none → stop and point at `/tstack:verify-setup` instead of inventing a target.
 
-1. **Index hygiene.** Read the feature map README and glob its sibling files. Fix missing, extra, duplicate, or dead entries. Lightweight; no generated inventory.
+1. **Index hygiene.** Read the feature map README and glob its sibling files. Fix missing, extra, duplicate, or dead entries. Lightweight; no generated inventory. Run `node <tstack>/scripts/verify-coverage.js <repo>` (`<tstack>` = two levels above this skill) and keep its gaps: each uncovered source file goes to the feature that exercises it, or to a new feature file; each file without `Drive:` gets one. Format and rules: `../verify-setup/references/coverage.md`.
 
 2. **Source wave.** One read-only subagent per feature file, launched concurrently. Each explains "how does this user-facing feature work?" from source, flags likely doc drift with citations, and returns one concise live-verification recipe. Children never drive the app and never edit files. Return shape: feature summary / source entry points / likely drift or none / one recipe.
 
@@ -38,6 +38,6 @@ Only edit the verification skill's own directory (its SKILL.md, features/, and a
 
 5. **Triage.** Wrong or missing user-POV description → doc drift, fix it. Working behavior the harness can't drive → harness gap, fix it; a harness fix follows the same helpers rule as generation (scripts executable, invocation documented in the skill body). App behavior that's actually broken → product gap; record it for the user, keep it out of this commit.
 
-6. **Ship or stop.** For changed: one commit of proven corrections, re-read every changed file first, then run the skill's verify script once more. For clean or blocked: no commit, report the outcome and the coverage honestly. On clean or changed, set the feature map README's `In sync with:` line to the current commit (part of the commit, or its own commit when clean).
+6. **Ship or stop.** For changed: one commit of proven corrections, re-read every changed file first, then run the skill's verify script once more. For clean or blocked: no commit, report the outcome and the coverage honestly. Clean or changed requires `verify-coverage.js` to exit 0 after the `In sync with:` update; red coverage is `blocked`, with its gap lines. On clean or changed, set the feature map README's `In sync with:` line to the current commit (part of the commit, or its own commit when clean).
 
 Keep concise run notes (features covered, unreachable prerequisites, confirmed drift, outcome) in a scratch location; don't commit them.

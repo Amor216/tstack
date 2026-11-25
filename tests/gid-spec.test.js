@@ -56,6 +56,11 @@ test('a check file the step may touch is not gaming', () => {
   assert.deepEqual(gamedCheckFiles('node .claude/skills/verify-x/verify.mjs --feature y', ['.claude/skills/verify-x/verify.mjs'], ['.claude/skills/verify-x/verify.mjs']), []);
 });
 
+test('a folder in Berührt covers the files inside it, but not a sibling with the same prefix', () => {
+  const check = 'grep -q x docs/ex/search.md && grep -q y docs/example.md';
+  assert.deepEqual(gamedCheckFiles(check, ['docs/ex/search.md', 'docs/example.md'], ['docs/ex/']), ['docs/example.md']);
+});
+
 test('a check file outside Berührt is gaming', () => {
   assert.deepEqual(gamedCheckFiles('bash tests/check.sh', ['tests/check.sh', 'src/a.rs'], ['src/a.rs']), ['tests/check.sh']);
   assert.deepEqual(gamedCheckFiles('./tests/check.sh', ['tests/check.sh'], []), ['tests/check.sh']);

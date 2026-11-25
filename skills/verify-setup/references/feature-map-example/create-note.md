@@ -2,6 +2,9 @@
 
 Create note lets a user save a titled note from the browser or CLI, cancel an unfinished draft, and confirm the saved note from a second user-facing view.
 
+Deckt ab: `src/editor/**`, `src/notes/store.js`, `src/cli/create.js`
+Drive: `.claude/skills/verify-notes/verify.sh create-note`
+
 ## Sub-features
 
 - `create-open` opens a blank editor from each browser entry point.

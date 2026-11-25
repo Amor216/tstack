@@ -11,6 +11,21 @@ const reply = (result, tokens) => {
 
 if (prompt.includes('You review one step')) { reply(process.env.FAKE_VERDICT || 'VERDICT: PASS', 50); process.exit(0); }
 const brief = fs.readFileSync(prompt.match(/brief at (.+) and follow/)[1], 'utf8');
+if (brief.includes('You extend the verification of one step.')) {
+  const mode = process.env.FAKE_VERIFY || 'noop';
+  if (mode === 'agents') {
+    fs.appendFileSync('AGENTS.md', 'Abdeckung: keine – x\n');
+    execSync('git add AGENTS.md && git commit -qm waive');
+  } else if (mode !== 'noop') {
+    const skills = path.join('.claude', 'skills');
+    const dir = fs.readdirSync(skills).filter(n => n.startsWith('verify-')).sort().map(n => path.join(skills, n, 'features'))[0];
+    const file = path.join(dir, fs.readdirSync(dir).filter(n => n.endsWith('.md') && n !== 'README.md').sort()[0]);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^Deckt ab:.*$/m, line => `${line}, \`${mode}\``));
+    execSync(`git add -A .claude && git commit -qm cover`);
+  }
+  reply('Verdict: VERIFIED – verification', 200);
+  process.exit(0);
+}
 const id = brief.match(/# Your step\n### (\S+)/)[1];
 if (process.env.FAKE_COMPACT === id) {
   const settings = JSON.parse(fs.readFileSync(path.resolve(args[args.indexOf('--settings') + 1]), 'utf8'));

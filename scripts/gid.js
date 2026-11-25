@@ -76,6 +76,8 @@ function incident(step, what) {
 
 // ---------- spec ----------
 const { parseSpec, gamedCheckFiles, specProblems } = require('./spec.js');
+const { coverage } = require('./verify-coverage.js');
+const gaps = cov => [...cov.problems, ...cov.uncovered.map(f => `nicht abgedeckt: ${f}`), ...cov.undriven.map(f => `ohne Drive: ${f}`)];
 const readSpec = () => parseSpec(fs.readFileSync(path.join(integ, specRel), 'utf8'));
 function markDone(id) {
   const file = path.join(integ, specRel);
@@ -97,8 +99,15 @@ const isWaiver = cmd => /^none\b/i.test(cmd);
 // ---------- headless claude ----------
 const tokensOf = res => Object.values(res.modelUsage || {}).reduce((n, u) =>
   n + u.inputTokens + u.outputTokens + u.cacheReadInputTokens + u.cacheCreationInputTokens, 0);
-const tokens = resume ? (({ total, ...t }) => t)(JSON.parse(fs.readFileSync(path.join(runDir, 'summary.json'), 'utf8')).tokens) : {};
-const count = (id, res) => { tokens[id] = (tokens[id] || 0) + tokensOf(res); return tokensOf(res); };
+const tokens = resume ? JSON.parse(fs.readFileSync(path.join(runDir, 'summary.json'), 'utf8')).tokens : {};
+const spent = { code: tokens.code || 0, verification: tokens.verification || 0 };
+for (const k of ['total', 'code', 'verification']) delete tokens[k];
+const count = (id, res, kind) => {
+  tokens[id] = (tokens[id] || 0) + tokensOf(res);
+  spent[kind] += tokensOf(res);
+  return tokensOf(res);
+};
+const verificationShare = () => (spent.code + spent.verification ? spent.verification / (spent.code + spent.verification) : 0);
 
 const settingsFile = path.join(runDir, 'worker-settings.json');
 fs.writeFileSync(settingsFile, JSON.stringify({ hooks: { PreCompact: [{ hooks: [{ type: 'command',
@@ -149,7 +158,7 @@ async function runStep(step, spec) {
     log(step.id, attempt, 'worker', 'started', wt);
     const flag = path.join(runDir, `${name}.context-full`);
     const res = await claude(`Read the brief at ${brief.split(path.sep).join('/')} and follow it exactly.`, wt, { flag });
-    log(step.id, attempt, 'worker', res.is_error ? 'error' : 'finished', (res.result || '').slice(-300), count(step.id, res));
+    log(step.id, attempt, 'worker', res.is_error ? 'error' : 'finished', (res.result || '').slice(-300), count(step.id, res, 'code'));
     if (res.is_error) incident(step.id, `worker #${attempt} ended with an error: ${(res.result || '').slice(-200)}`);
     if (fs.existsSync(flag)) {
       cleanup(wt, branch);
@@ -157,23 +166,7 @@ async function runStep(step, spec) {
       return 'split';
     }
 
-    const commits = Number(git(wt, 'rev-list', '--count', `${base}..HEAD`).out) || 0;
-    const check = step.check ? bash(step.check, wt) : { code: 1, out: 'no check command in spec' };
-    const stat = git(wt, 'diff', '--shortstat', `${base}..HEAD`).out;
-    const lines = (stat.match(/(\d+) insertion/) || [0, 0])[1] * 1 + (stat.match(/(\d+) deletion/) || [0, 0])[1] * 1;
-    log(step.id, attempt, 'check', check.code === 0 ? 'green' : 'red', `${step.check} → ${check.out.slice(-200)}`);
-    const problems = [];
-    if (!commits) problems.push('- No commit on the step branch: commit your changes.');
-    if (check.code !== 0) problems.push(`- Check \`${step.check}\` fails:\n${check.out.slice(-1500)}`);
-    if (lines > maxDiff) problems.push(`- Diff is ${lines} lines (limit ${maxDiff}): the step is too large or touches too much.`);
-    // Anti-gaming: the check is fixed by the spec. A diff that edits a file the check command names is rejected,
-    // unless the step may touch it ("Berührt"); the reviewer judges those edits.
-    const changed = git(wt, 'diff', '--name-only', `${base}..HEAD`).out.split('\n').filter(Boolean);
-    const checkFiles = gamedCheckFiles(step.check, changed, step.touches);
-    if (checkFiles.length) problems.push(`- The diff edits the step's check (${checkFiles.join(', ')}). Never change the check; change the code.`);
-    const ruleFiles = changed.filter(f => [specRel, 'AGENTS.md'].includes(f) && !step.touches.includes(f));
-    if (ruleFiles.length) problems.push(`- The diff edits ${ruleFiles.join(', ')}, which only the user changes. Revert it.`);
-
+    const { check, problems } = inspect(step, attempt, wt, base);
     if (check.code === 0 && problems.length) incident(step.id, `attempt ${attempt} rejected although its check is green: ${problems.join(' ')}`);
     let verdict = 'ISSUES';
     // A worker that reports BLOCKED with a red check, or an env-gap the harness cannot test, needs the user, not another attempt.
@@ -192,8 +185,31 @@ async function runStep(step, spec) {
       const text = review.result || '';
       verdict = ([...text.matchAll(/VERDICT:[\s*`]*(PASS|ISSUES|BLOCKED)\b/g)].pop() || [])[1];
       if (!verdict) { verdict = 'ISSUES'; incident(step.id, `reviewer gave no VERDICT line: ${text.slice(-200)}`); }
-      log(step.id, attempt, 'review', verdict, text.slice(-300), count(step.id, review));
+      log(step.id, attempt, 'review', verdict, text.slice(-300), count(step.id, review, 'verification'));
       if (verdict !== 'PASS') problems.push(text.slice(-3000));
+    }
+
+    const cov = verdict === 'PASS' && coverage(wt);
+    if (cov && !cov.waived && (!cov.ok || verificationShare() < 0.7)) {
+      const vbrief = path.join(runDir, `${name}.verifier.md`);
+      fs.writeFileSync(vbrief, [
+        fs.readFileSync(path.join(CORE, 'verifier.md'), 'utf8'),
+        `\n# Goal\n${goal(spec)} (spec: ${specRel})\n`,
+        `# Your step\n${step.section}\n`,
+        `# Coverage\nRun \`node "${path.join(__dirname, 'verify-coverage.js').split(path.sep).join('/')}" .\` in this worktree. Gaps now:\n${gaps(cov).join('\n') || 'none'}\n`,
+      ].join('\n'));
+      log(step.id, attempt, 'verifier', 'started', wt);
+      const vres = await claude(`Read the brief at ${vbrief.split(path.sep).join('/')} and follow it exactly.`, wt);
+      log(step.id, attempt, 'verifier', vres.is_error ? 'error' : 'finished', (vres.result || '').slice(-300), count(step.id, vres, 'verification'));
+      if (vres.is_error) incident(step.id, `verifier #${attempt} ended with an error: ${(vres.result || '').slice(-200)}`);
+      const again = inspect(step, attempt, wt, base).problems;
+      const after = coverage(wt);
+      if (!after.ok) again.push(`- Verification coverage is red after the verifier:\n${gaps(after).join('\n')}`);
+      if (again.length) {
+        verdict = 'ISSUES';
+        problems.push(...again);
+        log(step.id, attempt, 'verifier', 'rejected', again.join(' '));
+      }
     }
 
     if (verdict === 'PASS') {
@@ -217,6 +233,25 @@ async function runStep(step, spec) {
   log(step.id, '', 'step', `failed after ${MAX_ATTEMPTS} attempts`);
   incident(step.id, `step failed after ${MAX_ATTEMPTS} attempts: ${findings.slice(-300)}`);
   return 'failed';
+}
+function inspect(step, attempt, wt, base) {
+  const commits = Number(git(wt, 'rev-list', '--count', `${base}..HEAD`).out) || 0;
+  const check = step.check ? bash(step.check, wt) : { code: 1, out: 'no check command in spec' };
+  const stat = git(wt, 'diff', '--shortstat', `${base}..HEAD`).out;
+  const lines = (stat.match(/(\d+) insertion/) || [0, 0])[1] * 1 + (stat.match(/(\d+) deletion/) || [0, 0])[1] * 1;
+  log(step.id, attempt, 'check', check.code === 0 ? 'green' : 'red', `${step.check} → ${check.out.slice(-200)}`);
+  const problems = [];
+  if (!commits) problems.push('- No commit on the step branch: commit your changes.');
+  if (check.code !== 0) problems.push(`- Check \`${step.check}\` fails:\n${check.out.slice(-1500)}`);
+  if (lines > maxDiff) problems.push(`- Diff is ${lines} lines (limit ${maxDiff}): the step is too large or touches too much.`);
+  // Anti-gaming: the check is fixed by the spec. A diff that edits a file the check command names is rejected,
+  // unless the step may touch it ("Berührt"); the reviewer judges those edits.
+  const changed = git(wt, 'diff', '--name-only', `${base}..HEAD`).out.split('\n').filter(Boolean);
+  const checkFiles = gamedCheckFiles(step.check, changed, step.touches);
+  if (checkFiles.length) problems.push(`- The diff edits the step's check (${checkFiles.join(', ')}). Never change the check; change the code.`);
+  const ruleFiles = changed.filter(f => [specRel, 'AGENTS.md'].includes(f) && !step.touches.includes(f));
+  if (ruleFiles.length) problems.push(`- The diff edits ${ruleFiles.join(', ')}, which only the user changes. Revert it.`);
+  return { check, problems };
 }
 function cleanup(wt, branch) {
   git(repo, 'worktree', 'remove', '--force', wt);
@@ -251,6 +286,8 @@ function cleanup(wt, branch) {
   }
   const before = readSpec();
   const problems = specProblems(before);
+  const cov = coverage(integ);
+  if (!cov.hasMap && !cov.waived) problems.push('No feature map of the verification: run /tstack:verify-setup or add `Abdeckung: keine – <reason>` to AGENTS.md');
   for (const s of before.steps.filter(s => !s.done && s.mode === 'auto' && s.check)) {
     if (checkInteg(s.check).code === 0) problems.push(`${s.id}: the check already passes before the step is built, so it proves nothing: \`${s.check}\``);
   }
@@ -292,6 +329,8 @@ function cleanup(wt, branch) {
     if (sync.code) { git(integ, 'merge', '--abort'); finalCheck = { code: 1, out: `merging ${baseBranch} into the run failed: ${sync.out}` }; }
     const checks = [...spec.steps.map(s => s.check), isWaiver(verify) ? '' : verify].filter(Boolean);
     for (const c of finalCheck.code ? [] : checks) { finalCheck = checkInteg(c); if (finalCheck.code) { finalCheck.out = `${c}: ${finalCheck.out}`; break; } }
+    const cov = finalCheck.code ? null : coverage(integ);
+    if (cov && !cov.ok) finalCheck = { code: 1, out: `verification coverage red: ${gaps(cov).join(', ')}` };
     log('run', '', 'final check', finalCheck.code ? 'red' : 'green', finalCheck.out.slice(-300));
     if (finalCheck.code) incident('run', `final check red although every step passed: ${finalCheck.out.slice(-200)}`);
   }
@@ -309,7 +348,8 @@ function cleanup(wt, branch) {
 
   const summary = { run: runId, spec: specRel, landed, integrationBranch: landed ? null : integBranch,
     steps: Object.fromEntries(spec.steps.map(s => [s.id, state[s.id] || 'waiting'])),
-    tokens: { ...tokens, total: Object.values(tokens).reduce((a, b) => a + b, 0) }, log: logFile };
+    tokens: { ...tokens, total: Object.values(tokens).reduce((a, b) => a + b, 0), ...spent },
+    verificationShare: Math.round(verificationShare() * 100) / 100, log: logFile };
   fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log('\nSUMMARY ' + JSON.stringify(summary));
   process.exit(landed ? 0 : 1);

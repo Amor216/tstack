@@ -55,6 +55,28 @@ test('Verify line: unrelated command after edit: block', () => {
 });
 test('Verify line: verify command after edit + verdict: allow', () => assert.equal(run([user('x'), tool('Edit', { file_path: 'a.py' }), result(), tool('Bash', { command: 'python .claude\\skills\\verify-todo\\verify.py add' }), result(), say('Verdict: VERIFIED – verify.py')], { verify: V }), null));
 test('Verify none waiver: any check counts', () => assert.equal(run([user('x'), tool('Edit', { file_path: 'a.py' }), result(), tool('Bash', { command: 'pytest' }), result(), say('Verdict: VERIFIED – pytest')], { verify: 'none – scratch repo' }), null));
+function covRepo({ withMap = true, covered = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const git = (...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const write = (f, t) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); };
+  git('init', '-q');
+  write('src/a.js', 'a\n');
+  if (withMap) write('.claude/skills/verify-app/features/search.md', `Deckt ab: \`src/a.js\`${covered ? ', `src/new.js`' : ''}\nDrive: \`./drive search\`\n`);
+  git('add', '-A'); git('commit', '-qm', 'x');
+  if (withMap) { write('.claude/skills/verify-app/features/README.md', `In sync with: ${git('rev-parse', 'HEAD')}\n`); git('add', '-A'); git('commit', '-qm', 'y'); }
+  write('src/new.js', 'n\n');
+  return dir;
+}
+const verified = [user('x'), tool('Edit', { file_path: 'src/new.js' }), result(), tool('Bash', { command: 'npm test' }), result(), say('Verdict: VERIFIED – npm test')];
+test('feature map + red coverage: block naming the file and verify-maintain', () => {
+  const r = run(verified, { cwd: covRepo() });
+  assert.equal(r.decision, 'block');
+  assert.match(r.reason, /src\/new\.js/);
+  assert.match(r.reason, /\/tstack:verify-maintain/);
+});
+test('feature map + green coverage: allow', () => assert.equal(run(verified, { cwd: covRepo({ covered: true }) }), null));
+test('no feature map: behaves as before', () => assert.equal(run(verified, { cwd: covRepo({ withMap: false }) }), null));
+
 test('prototype branch: no check required', () => {
   const r = run([user('x'), tool('Edit', { file_path: 'p.html' }), result(), say('done')], { head: 'ref: refs/heads/prototype/p\n' });
   assert.equal(r, null);

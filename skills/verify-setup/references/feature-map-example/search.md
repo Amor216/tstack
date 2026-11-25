@@ -2,6 +2,9 @@
 
 Search lets a user find notes by title or body text, inspect a matching note, and distinguish no matches from an unavailable search.
 
+Deckt ab: `src/search/**`, `src/cli/search.js`
+Drive: `.claude/skills/verify-notes/verify.sh search`
+
 ## Sub-features
 
 - `search-open` opens search from each supported browser entry point.

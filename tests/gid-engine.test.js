@@ -26,7 +26,7 @@ const spec = `# 99 Engine-Test
 - Prüfbefehl: \`test -f S2.txt\`
 `;
 
-function setup(specText = spec) {
+function setup(specText = spec, files = { 'AGENTS.md': 'Verify: `true`\nAbdeckung: keine – Test\n' }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gid run-'));
   const bin = path.join(dir, 'bin');
   const repo = path.join(dir, 'repo');
@@ -34,7 +34,10 @@ function setup(specText = spec) {
   fs.mkdirSync(path.join(repo, 'specs'), { recursive: true });
   fs.writeFileSync(path.join(bin, 'claude.cmd'), `@node "${FAKE}" %*\r\n`);
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nexec node "${FAKE}" "$@"\n`, { mode: 0o755 });
-  fs.writeFileSync(path.join(repo, 'AGENTS.md'), 'Verify: `true`\n');
+  for (const [f, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
+    fs.writeFileSync(path.join(repo, f), text);
+  }
   fs.writeFileSync(path.join(repo, 'specs', '99.md'), specText);
   fs.writeFileSync(path.join(dir, 'list.md'), '# Liste\n\n## Offen\n\n- [ ] alt\n\n## Erledigt\n');
   const sh = c => spawnSync('git', c, { cwd: repo });
@@ -43,9 +46,18 @@ function setup(specText = spec) {
   return { repo, bin, list: path.join(dir, 'list.md') };
 }
 
+const FEATURES = '.claude/skills/verify-app/features';
+function setupMap(cover = '`src/none.js`') {
+  const ctx = setup(spec, { 'AGENTS.md': 'Verify: `true`\n', [`${FEATURES}/README.md`]: 'In sync with: 0000\n',
+    [`${FEATURES}/app.md`]: `# App\n\nDeckt ab: ${cover}\nDrive: \`true\`\n` });
+  fs.writeFileSync(path.join(ctx.repo, FEATURES, 'README.md'), `In sync with: ${git(ctx.repo, 'rev-parse', 'HEAD')}\n`);
+  git(ctx.repo, 'commit', '-qam', 'map');
+  return ctx;
+}
+
 function gid({ repo, bin, list }, env = {}, ...extra) {
   const r = spawnSync('node', [GID, 'specs/99.md', '--no-push', ...extra], { cwd: repo, encoding: 'utf8',
-    env: { ...process.env, CI: '', FAKE_FAIL: '', FAKE_COMPACT: '', FAKE_EDIT: '', FAKE_VERDICT: '', FAKE_NEED: '', TSTACK_INCIDENTS: list, ...env,
+    env: { ...process.env, CI: '', FAKE_FAIL: '', FAKE_COMPACT: '', FAKE_EDIT: '', FAKE_VERDICT: '', FAKE_NEED: '', FAKE_VERIFY: '', TSTACK_INCIDENTS: list, ...env,
       PATH: bin + path.delimiter + process.env.PATH } });
   const runs = path.join(repo, '.tstack', 'runs');
   const id = fs.readdirSync(runs).sort().pop();
@@ -59,7 +71,8 @@ test('a run records tokens per step and in total, and workers run with CI=true',
   const r = gid(ctx);
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(r.summary.steps, { S1: 'done', S2: 'done' });
-  assert.deepEqual(r.summary.tokens, { S1: 150, S2: 150, total: 300 });
+  assert.deepEqual(r.summary.tokens, { S1: 150, S2: 150, total: 300, code: 200, verification: 100 });
+  assert.doesNotMatch(r.log, /\tverifier\t/);
   assert.equal(r.log.split('\n')[0].split('\t').pop(), 'tokens');
   assert.match(r.log, /\tworker\tfinished\t[^\n]*\t100\n/);
   assert.equal(fs.readFileSync(path.join(ctx.repo, 'S1.txt'), 'utf8'), 'true');
@@ -187,4 +200,40 @@ test('a worker that reports an env-gap blocks the step at once, and --resume pic
   const second = gid(ctx, { FAKE_NEED: 'harness.txt' }, '--resume', first.id);
   assert.equal(second.code, 0, second.out);
   assert.deepEqual(second.summary.steps, { S1: 'done', S2: 'done' });
+});
+
+test('a verifier covers the source a step added, its tokens count as verification, and the run lands', () => {
+  const ctx = setupMap();
+  const r = gid(ctx, { FAKE_VERIFY: 'S*.txt' });
+  assert.equal(r.code, 0, r.out + r.log);
+  assert.match(r.log, /\tS1\t1\tverifier\tfinished\t/);
+  assert.deepEqual(r.summary.tokens, { S1: 350, S2: 350, total: 700, code: 200, verification: 500 });
+  assert.equal(r.summary.verificationShare, 0.71);
+  assert.match(fs.readFileSync(path.join(ctx.repo, FEATURES, 'app.md'), 'utf8'), /^Deckt ab: `src\/none\.js`, `S\*\.txt`/m);
+});
+
+test('a verifier that leaves the new source uncovered fails the step and names the file', () => {
+  const r = gid(setupMap(), { FAKE_VERIFY: 'noop' });
+  assert.equal(r.summary.steps.S1, 'failed');
+  assert.match(r.log, /\tS1\t1\tverifier\trejected\t[^\n]*nicht abgedeckt: S1\.txt/);
+});
+
+test('a verifier that edits AGENTS.md fails the step', () => {
+  const r = gid(setupMap(), { FAKE_VERIFY: 'agents' });
+  assert.equal(r.summary.steps.S1, 'failed');
+  assert.match(r.log, /\tverifier\trejected\t[^\n]*AGENTS\.md/);
+});
+
+test('the verifier runs while the verification share is below 70 % even with green coverage', () => {
+  const r = gid(setupMap('`S*.txt`'));
+  assert.equal(r.code, 0, r.out + r.log);
+  assert.match(r.log, /\tS1\t1\tverifier\tstarted\t/);
+  assert.match(r.log, /\tS2\t1\tverifier\tstarted\t/);
+});
+
+test('preflight stops before any worker when there is neither a feature map nor a waiver', () => {
+  const r = gid(setup(spec, { 'AGENTS.md': 'Verify: `true`\n' }));
+  assert.equal(r.code, 2, r.out);
+  assert.doesNotMatch(r.log, /\tworker\t/);
+  assert.match(r.summary.preflight.join('\n'), /verify-setup/);
 });

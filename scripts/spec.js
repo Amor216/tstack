@@ -32,7 +32,7 @@ function parseSpec(text) {
 // Anti-gaming: changed files the check command names. A file the step may touch per "Berührt" is allowed:
 // a grep check on the file the step must change, or the verify script a "Verifikation erweitern" step extends.
 function gamedCheckFiles(check, changed, touches) {
-  const allowed = f => touches.some(t => f === t || f.endsWith('/' + t));
+  const allowed = f => touches.some(t => f === t || f.endsWith('/' + t) || (t.endsWith('/') && f.startsWith(t)));
   return check.split(/\s+/).map(tok => tok.replace(/^\.\//, '')).filter(f => changed.includes(f) && !allowed(f));
 }
 
