@@ -207,8 +207,10 @@ test('a verifier covers the source a step added, its tokens count as verificatio
   const r = gid(ctx, { FAKE_VERIFY: 'S*.txt' });
   assert.equal(r.code, 0, r.out + r.log);
   assert.match(r.log, /\tS1\t1\tverifier\tfinished\t/);
-  assert.deepEqual(r.summary.tokens, { S1: 350, S2: 350, total: 700, code: 200, verification: 500 });
-  assert.equal(r.summary.verificationShare, 0.71);
+  assert.doesNotMatch(r.log, /\tS2\t1\tverifier\t/);
+  assert.deepEqual(r.summary.tokens, { S1: 350, S2: 150, total: 500, code: 200, verification: 300 });
+  assert.deepEqual(r.summary.costUsd, { code: 0.02, verification: 0.03, total: 0.05 });
+  assert.equal(r.summary.verificationShare, 0.6);
   assert.match(fs.readFileSync(path.join(ctx.repo, FEATURES, 'app.md'), 'utf8'), /^Deckt ab: `src\/none\.js`, `S\*\.txt`/m);
 });
 
@@ -224,11 +226,21 @@ test('a verifier that edits AGENTS.md fails the step', () => {
   assert.match(r.log, /\tverifier\trejected\t[^\n]*AGENTS\.md/);
 });
 
-test('the verifier runs while the verification share is below 70 % even with green coverage', () => {
+test('with green coverage no verifier runs, however low the verification share', () => {
   const r = gid(setupMap('`S*.txt`'));
   assert.equal(r.code, 0, r.out + r.log);
-  assert.match(r.log, /\tS1\t1\tverifier\tstarted\t/);
-  assert.match(r.log, /\tS2\t1\tverifier\tstarted\t/);
+  assert.doesNotMatch(r.log, /\tverifier\t/);
+});
+
+test('every headless call starts without MCP servers, and cached re-reads do not count as tokens', () => {
+  const ctx = setup();
+  const argsLog = path.join(ctx.repo, '..', 'args.log');
+  const r = gid(ctx, { FAKE_ARGS: argsLog });
+  assert.equal(r.code, 0, r.out);
+  const calls = fs.readFileSync(argsLog, 'utf8').trim().split('\n');
+  assert.equal(calls.length, 4);
+  for (const c of calls) assert.match(c, /--strict-mcp-config/);
+  assert.equal(r.summary.tokens.total, 300);
 });
 
 test('preflight stops before any worker when there is neither a feature map nor a waiver', () => {

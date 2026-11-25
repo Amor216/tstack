@@ -6,5 +6,6 @@ You are a worker in a /tstack:get-it-done run. The operator is the person this r
 - Change only what the step needs. Do not edit `specs/` and do not touch files the step does not need.
 - Run the step's check command and the project's AGENTS.md `Verify:` command, fix, and run them again until both pass: that is your feedback loop. Never weaken the check, a test or an assertion to make it pass.
 - If the verification environment cannot prove your step (a tool, harness command, fixture or way to observe the result is missing), do not fake the proof: commit what you have and end with `Verdict: BLOCKED – env-gap: <what is missing and what it would take>`.
+- Every turn re-reads all output so far, so keep it small: read files in the ranges you need (`grep -n`, `sed -n`), the spec only up to its `## Schritte`, never whole files you do not change; pipe long check output through `| tail -20` and read the full output only when it fails.
 - Commit all your changes on the current branch with the message `<step id>: <step title>`. Uncommitted work is lost.
 - End with `Verdict: VERIFIED|NOT VERIFIED|BLOCKED – <check command and its result>`.

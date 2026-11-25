@@ -98,16 +98,20 @@ const isWaiver = cmd => /^none\b/i.test(cmd);
 
 // ---------- headless claude ----------
 const tokensOf = res => Object.values(res.modelUsage || {}).reduce((n, u) =>
-  n + u.inputTokens + u.outputTokens + u.cacheReadInputTokens + u.cacheCreationInputTokens, 0);
-const tokens = resume ? JSON.parse(fs.readFileSync(path.join(runDir, 'summary.json'), 'utf8')).tokens : {};
+  n + u.inputTokens + u.outputTokens + u.cacheCreationInputTokens, 0);
+const previous = resume ? JSON.parse(fs.readFileSync(path.join(runDir, 'summary.json'), 'utf8')) : {};
+const tokens = { ...previous.tokens };
 const spent = { code: tokens.code || 0, verification: tokens.verification || 0 };
+const cost = { code: previous.costUsd?.code || 0, verification: previous.costUsd?.verification || 0 };
 for (const k of ['total', 'code', 'verification']) delete tokens[k];
 const count = (id, res, kind) => {
   tokens[id] = (tokens[id] || 0) + tokensOf(res);
   spent[kind] += tokensOf(res);
+  cost[kind] += res.total_cost_usd || 0;
   return tokensOf(res);
 };
-const verificationShare = () => (spent.code + spent.verification ? spent.verification / (spent.code + spent.verification) : 0);
+const usd = n => Math.round(n * 10000) / 10000;
+const verificationShare = () => (cost.code + cost.verification ? cost.verification / (cost.code + cost.verification) : 0);
 
 const settingsFile = path.join(runDir, 'worker-settings.json');
 fs.writeFileSync(settingsFile, JSON.stringify({ hooks: { PreCompact: [{ hooks: [{ type: 'command',
@@ -115,7 +119,7 @@ fs.writeFileSync(settingsFile, JSON.stringify({ hooks: { PreCompact: [{ hooks: [
 
 function claude(prompt, cwd, { readOnly = false, flag = '' } = {}) {
   // relative: the run dir may contain spaces, which the Windows shell would split
-  const args = ['-p', '--output-format', 'json', '--permission-mode', 'bypassPermissions',
+  const args = ['-p', '--output-format', 'json', '--strict-mcp-config', '--permission-mode', 'bypassPermissions',
     '--settings', path.relative(cwd, settingsFile).split(path.sep).join('/'),
     '--disallowedTools', readOnly ? 'Agent,Edit,Write,NotebookEdit' : 'Agent'];
   return new Promise(resolve => {
@@ -190,7 +194,7 @@ async function runStep(step, spec) {
     }
 
     const cov = verdict === 'PASS' && coverage(wt);
-    if (cov && !cov.waived && (!cov.ok || verificationShare() < 0.7)) {
+    if (cov && !cov.waived && !cov.ok) {
       const vbrief = path.join(runDir, `${name}.verifier.md`);
       fs.writeFileSync(vbrief, [
         fs.readFileSync(path.join(CORE, 'verifier.md'), 'utf8'),
@@ -349,6 +353,7 @@ function cleanup(wt, branch) {
   const summary = { run: runId, spec: specRel, landed, integrationBranch: landed ? null : integBranch,
     steps: Object.fromEntries(spec.steps.map(s => [s.id, state[s.id] || 'waiting'])),
     tokens: { ...tokens, total: Object.values(tokens).reduce((a, b) => a + b, 0), ...spent },
+    costUsd: { code: usd(cost.code), verification: usd(cost.verification), total: usd(cost.code + cost.verification) },
     verificationShare: Math.round(verificationShare() * 100) / 100, log: logFile };
   fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log('\nSUMMARY ' + JSON.stringify(summary));

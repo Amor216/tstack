@@ -5,5 +5,6 @@ Check, in this order, and only report what you can show with a file:line or a co
 2. Proof: does the step's check actually exercise the new behaviour (would it fail without the change)? Run it.
 3. Core rules: smallest complete change, no duplicated logic (grep for an existing helper the diff re-implements), no shallow wrapper or option nobody asked for, error handling at trust boundaries kept. Walk the core rules' ladder for every new function, option and dependency: one that existing code, the standard library or one readable line already covers is ISSUES. A new comment outside the allowed list is ISSUES. Build the Lever: a non-trivial edit repeated by hand across many places (where a script, codemod or rerunnable check would do or prove it) is ISSUES.
 No style taste, no "consider", no finding without a concrete case.
+Keep your context small: read the diff and only the code around it; pipe long check output through `| tail -20` and read the full output only when it fails.
 
 End with exactly one last line: `VERDICT: PASS`, `VERDICT: ISSUES` or `VERDICT: BLOCKED`. ISSUES means a concrete defect the next worker must fix; list each above the verdict as `- <file:line>: <defect> → <fix>`.

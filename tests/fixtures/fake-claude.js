@@ -6,8 +6,9 @@ const args = process.argv.slice(2);
 const prompt = fs.readFileSync(0, 'utf8');
 const reply = (result, tokens) => {
   process.stdout.write(JSON.stringify({ result, is_error: false, total_cost_usd: tokens / 10000,
-    modelUsage: { m: { inputTokens: tokens - 10, outputTokens: 10, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } }));
+    modelUsage: { m: { inputTokens: tokens - 10, outputTokens: 10, cacheReadInputTokens: 1000, cacheCreationInputTokens: 0 } } }));
 };
+if (process.env.FAKE_ARGS) fs.appendFileSync(process.env.FAKE_ARGS, args.join(' ') + '\n');
 
 if (prompt.includes('You review one step')) { reply(process.env.FAKE_VERDICT || 'VERDICT: PASS', 50); process.exit(0); }
 const brief = fs.readFileSync(prompt.match(/brief at (.+) and follow/)[1], 'utf8');

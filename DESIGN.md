@@ -141,7 +141,10 @@ Spec ─► Bausteine + Abhängigkeitsgraph
 - Briefs werden als Datei übergeben, nicht per Shell interpoliert.
 - Token-Management: jeder Schritt in einem frischen Chat. Läuft der Kontext eines Workers voll, markiert ein
   PreCompact-Hook den Schritt, und die Engine meldet ihn als `split` (aufteilen) statt ihn zu wiederholen.
-  Tokens pro Aufruf stehen in `log.tsv` und `summary.json`. Der Orchestrator hält seinen Stand in der Datei (Häkchen in der Spec
+  Neue Tokens pro Aufruf (Input + Cache-Aufbau + Ausgabe; erneut gelesener Cache zählt nicht) stehen in
+  `log.tsv` und `summary.json`, die Kosten aus `total_cost_usd` als `costUsd`. Worker starten ohne MCP-Server
+  (`--strict-mcp-config`, gemessen 43,5k → 35,8k Grundkontext). Der Verifikations-Worker läuft nur bei roter
+  Abdeckung; der Verifikations-Anteil wird auf die Kosten gemessen und gemeldet, nicht erzwungen. Der Orchestrator hält seinen Stand in der Datei (Häkchen in der Spec
   + Lauf-Log) und setzt einen gestoppten Lauf mit `--resume <id>` auf dem Integrations-Branch fort.
 - Aufräumen: Worktrees nach Merge entfernen (`-p`-Läufe räumen nicht selbst auf).
 - Vorab-Check: Die Engine liest die Spec aus dem Integrations-Worktree (dieselben Bytes, die der Lauf nutzt)

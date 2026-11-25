@@ -11,7 +11,7 @@ The session the user names, else this one. For a `/tstack:get-it-done` run: its 
 
 ## 2. Find candidates
 
-Look for: corrections the user gave, mistakes a check could have caught, facts the agent had to discover the hard way, context the user supplied that the agent could have fetched, checks skipped or run on a proxy instead of the real artifact, skills that should have fired, expensive or repeated tool calls, steering text that changed nothing. For a run: `verificationShare` in `summary.json` below 0.7 is always a finding (too little effort went into verification), with the share and the code and verification tokens from `summary.json`. Keep a finding only if it will still hold in six months and would change what a future agent does. A mistake class counts once it happened twice; a single serious miss also counts.
+Look for: corrections the user gave, mistakes a check could have caught, facts the agent had to discover the hard way, context the user supplied that the agent could have fetched, checks skipped or run on a proxy instead of the real artifact, skills that should have fired, expensive or repeated tool calls, steering text that changed nothing. For a run: `verificationShare` in `summary.json` below 0.7 is always a finding (too little effort went into verification), with the share, `costUsd` and the code and verification tokens from `summary.json`. Keep a finding only if it will still hold in six months and would change what a future agent does. A mistake class counts once it happened twice; a single serious miss also counts.
 
 ## 3. Fix each at the highest level that works
 
