@@ -129,12 +129,21 @@ Spec ─► Bausteine + Abhängigkeitsgraph
          └─ D (braucht A) ─► startet nach Merge von A
 ```
 
+Bausteine entstehen auch innerhalb eines Schritts: Ein nur lesender Planer (`core/planner.md`) zerlegt jeden
+offenen Schritt in Teile (`S2.a`, `S2.b`, …) mit eigenem `Berührt`, Prüfbefehl und Kanten, wenn das den
+kritischen Pfad verkürzt; ein Vertrags-Teil (Interface, Stub) macht abhängige Stücke parallel. Ein Teil darf eine
+Kante seines Schritts weglassen, die er nicht braucht, so läuft auch eine reine Kette S1 → S2 → S3 parallel. Die
+Engine prüft den Plan (Teile innerhalb von `Berührt`, keine fremden Kanten, kein Zyklus, Prüfbefehl jetzt rot),
+sonst läuft der Schritt ganz. Nach dem Merge aller Teile entscheidet der Prüfbefehl des Schritts (`join`); ist er
+rot, beendet ein Worker den Schritt. Kritischer Pfad vorher/nachher steht in Log und `summary.json`.
+
 ### Regeln
 
 - Ein fest gescripteter Ablauf trifft die Orchestrierungsentscheidungen, nicht ein Agent.
   Begründung: Pocock implement-spec, „deterministic loop is faster, cheaper, and more reliable“.
 - Der Orchestrator glaubt keinem Statustext. Er prüft Seiteneffekte: Diff, Prüfbefehl, Commit-SHA.
-- Grenzen: Laufzeit, Versuche (2 pro Schritt), Diff-Größe. Bei Verstoß: Halt + Push.
+- Grenzen: Laufzeit, Versuche (2 pro Schritt). Bei Verstoß: Halt + Push. Keine Diff-Größen-Grenze (wie pstack):
+  ob ein Diff über den Schritt hinausgeht, beurteilt der Reviewer.
 - Ein Ergebnis ohne die geforderten Belege (SHA, Methode) gilt nicht. Ein Neustart, danach BLOCKED.
 - Das Prüfziel wird nie gelockert, um „fertig“ melden zu können.
 - Worker spawnen keine weiteren Agents (Rekursionsschutz liegt im Orchestrator-Code).

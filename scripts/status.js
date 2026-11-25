@@ -27,14 +27,14 @@ function load(repo) {
   });
 }
 
-const PHASE = { worker: { started: 'Worker', finished: 'Prüfung' }, check: 'Review', review: 'Merge', merge: 'Merge' };
+const PHASE = { worker: { started: 'Worker', finished: 'Prüfung' }, check: 'Review', review: 'Merge', merge: 'Merge', join: 'Schritt-Prüfung' };
 const ICON = { done: '✔', running: '▶', failed: '✖', blocked: '⏸', manual: '⏸', split: '✂', waiting: '○' };
 const LABEL = { failed: 'gescheitert', blocked: 'blockiert, braucht dich', manual: 'manuell, braucht dich',
   split: 'Kontext voll, Schritt aufteilen' };
 
 function stateOf(run, step, rows) {
   if (run.summary) return run.summary.steps[step.id] || 'waiting';
-  if (step.done || rows.some(r => r.phase === 'merge' && r.result === 'merged')) return 'done';
+  if (step.done || rows.some(r => r.step === step.id && r.phase === 'merge' && r.result === 'merged')) return 'done';
   const end = rows.find(r => r.phase === 'step');
   if (end) return /^split/.test(end.result) ? 'split' : /manual/.test(end.result) ? 'manual' : /blocked/.test(end.result) ? 'blocked' : 'failed';
   return rows.length && run.live ? 'running' : 'waiting';
@@ -51,7 +51,9 @@ function render(run, now = new Date()) {
   const d = s => depth[s.id] ??= s.blockedBy.length
     ? 1 + Math.max(...s.blockedBy.map(b => { const p = run.steps.find(x => x.id === b); return p ? d(p) : 0; })) : 0;
   for (const s of run.steps) {
-    const rows = run.rows.filter(r => r.step === s.id);
+    // turbo parts of a split step log as <step>.<letter>; they count toward their step
+    const parts = [...new Set(run.rows.map(r => r.step).filter(id => id.startsWith(s.id + '.')))];
+    const rows = run.rows.filter(r => r.step === s.id || parts.includes(r.step));
     const state = stateOf(run, s, rows);
     const last = rows[rows.length - 1];
     const tokens = rows.reduce((n, r) => n + r.tokens, 0);
@@ -60,7 +62,8 @@ function render(run, now = new Date()) {
     if (state === 'running') {
       const phase = PHASE[last.phase];
       const started = [...rows].reverse().find(r => r.phase === 'worker' && r.result === 'started');
-      info = `${typeof phase === 'string' ? phase : phase[last.result]} #${last.attempt} seit ${mins(now - started.ts)}  ${path.basename(started.evidence)}`;
+      info = parts.length && last.step !== s.id ? `parallel in ${parts.length} Teilen seit ${mins(now - rows[0].ts)}`
+        : `${typeof phase === 'string' ? phase : phase[last.result]} #${last.attempt || started.attempt} seit ${mins(now - started.ts)}  ${path.basename(started.evidence)}`;
     }
     if (state === 'waiting') {
       const open = s.blockedBy.filter(b => stateOf(run, run.steps.find(x => x.id === b) || { id: b, done: true }, run.rows.filter(r => r.step === b)) !== 'done');
@@ -68,6 +71,8 @@ function render(run, now = new Date()) {
     }
     const indent = d(s) ? '  '.repeat(d(s)) + '└ ' : '';
     out.push(`  ${indent}${ICON[state]} ${s.id} ${s.title}  ${info}${tokens ? '  ' + k(tokens) : ''}`);
+    const partState = p => run.summary?.parts?.[p] || stateOf(run, { id: p }, run.rows.filter(r => r.step === p));
+    if (parts.length) out.push(`  ${' '.repeat(indent.length)}    Teile: ${parts.map(p => `${ICON[partState(p)]} ${p}`).join('  ')}`);
   }
   if (status === 'abgebrochen' || status === 'nicht gelandet') out.push(`  weiter: node gid.js ${run.specRel} --resume ${run.id}`);
   return out.join('\n');

@@ -10,6 +10,7 @@ const reply = (result, tokens) => {
 };
 if (process.env.FAKE_ARGS) fs.appendFileSync(process.env.FAKE_ARGS, args.join(' ') + '\n');
 
+if (prompt.includes('You plan a turbo run')) { reply('```json\n' + (process.env.FAKE_PLAN || '{}') + '\n```', 80); process.exit(0); }
 if (prompt.includes('You review one step')) { reply(process.env.FAKE_VERDICT || 'VERDICT: PASS', 50); process.exit(0); }
 const brief = fs.readFileSync(prompt.match(/brief at (.+) and follow/)[1], 'utf8');
 if (brief.includes('You extend the verification of one step.')) {

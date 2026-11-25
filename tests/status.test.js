@@ -71,3 +71,17 @@ test('a finished run shows its summary states and whether it landed', () => {
   assert.match(out, /nicht gelandet/);
   assert.match(out, /✂ S2 Recherche .*aufteilen/);
 });
+
+test('a split step shows its parts, running beside each other', () => {
+  const repo = makeRun();
+  const log = path.join(repo, '.tstack', 'runs', '20261123200000', 'log.tsv');
+  fs.writeFileSync(log, [...LOG.slice(0, 5),
+    row(9, 'S2.a', 1, 'worker', 'started', '/r/.tstack/wt/1/S2.a-a1', ''),
+    row(9, 'S2.b', 1, 'worker', 'started', '/r/.tstack/wt/1/S2.b-a1', ''),
+    row(10, 'S2.a', 1, 'worker', 'finished', 'ok', 40000),
+    row(11, 'S2.a', 1, 'merge', 'merged', 'abc1234', '')].join('\n') + '\n');
+  const out = render(load(repo)[0], new Date('2026-11-23T20:12:00Z'));
+  assert.match(out, /▶ S2 Recherche .*parallel in 2 Teilen seit 3m.*40k/);
+  assert.match(out, /Teile: ✔ S2\.a {2}▶ S2\.b/);
+  assert.match(out, /○ S3 Löschen .*wartet auf S2/);
+});

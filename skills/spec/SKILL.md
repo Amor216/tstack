@@ -35,4 +35,4 @@ Synthesize; do not re-interview. Decisions still open → read `../grill/SKILL.m
 
    On PASS set `Status: abgenommen`, update `MODULES.md` with the planned change, commit both.
 
-Reply: the spec path, the steps with edges and modes, which steps can run in parallel, and the next command per the build rule in `../next/MAP.md`.
+Reply: the spec path, the steps with edges and modes, which steps can run in parallel (turbo also splits steps into parallel parts), and the next command per the build rule in `../next/MAP.md`.

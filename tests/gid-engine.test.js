@@ -57,7 +57,7 @@ function setupMap(cover = '`src/none.js`') {
 
 function gid({ repo, bin, list }, env = {}, ...extra) {
   const r = spawnSync('node', [GID, 'specs/99.md', '--no-push', ...extra], { cwd: repo, encoding: 'utf8',
-    env: { ...process.env, CI: '', FAKE_FAIL: '', FAKE_COMPACT: '', FAKE_EDIT: '', FAKE_VERDICT: '', FAKE_NEED: '', FAKE_VERIFY: '', TSTACK_INCIDENTS: list, ...env,
+    env: { ...process.env, CI: '', FAKE_FAIL: '', FAKE_COMPACT: '', FAKE_EDIT: '', FAKE_VERDICT: '', FAKE_NEED: '', FAKE_VERIFY: '', FAKE_PLAN: '', TSTACK_INCIDENTS: list, ...env,
       PATH: bin + path.delimiter + process.env.PATH } });
   const runs = path.join(repo, '.tstack', 'runs');
   const id = fs.readdirSync(runs).sort().pop();
@@ -248,4 +248,49 @@ test('preflight stops before any worker when there is neither a feature map nor 
   assert.equal(r.code, 2, r.out);
   assert.doesNotMatch(r.log, /\tworker\t/);
   assert.match(r.summary.preflight.join('\n'), /verify-setup/);
+});
+
+const chainSpec = (check = 'test -f S2.a.txt && test -f S2.b.txt') => spec
+  .replace('- Berührt: \`S2.txt\`', '- Berührt: \`S2.txt\`, \`S2.a.txt\`, \`S2.b.txt\`').replace('test -f S2.txt', check);
+const twoParts = (check = id => `test -f ${id}.txt`) => JSON.stringify({ S1: 'one file', S2: ['S2.a', 'S2.b'].map(id =>
+  ({ id, title: id, deliver: `writes ${id}.txt`, touches: [`${id}.txt`], check: check(id), blockedBy: [] })) });
+const firstFinish = log => log.indexOf('\tworker\tfinished');
+
+test('turbo splits a chained step into parts that run at once, beside the step they no longer wait for', () => {
+  const r = gid(setup(chainSpec()), { FAKE_PLAN: twoParts() }, '--turbo');
+  assert.equal(r.code, 0, r.out + r.log);
+  assert.deepEqual(r.summary.steps, { S1: 'done', S2: 'done' });
+  assert.deepEqual(r.summary.parts, { 'S2.a': 'done', 'S2.b': 'done' });
+  assert.deepEqual(r.summary.criticalPath, { before: 2, after: 1 });
+  for (const id of ['S1', 'S2.a', 'S2.b']) assert.ok(r.log.indexOf(`\t${id}\t1\tworker\tstarted`) < firstFinish(r.log), id + '\n' + r.log);
+  assert.doesNotMatch(r.log, /\tS2\t\d+\tworker\t/);
+  assert.match(r.log, /\tS2\t\tjoin\tgreen\t/);
+  assert.match(r.log, /\tplan\t\tplan\tS1 whole: one file/);
+});
+
+test('turbo: when the merged parts leave the step check red, one worker finishes the step', () => {
+  const r = gid(setup(chainSpec('test -f S2.txt')), { FAKE_PLAN: twoParts() }, '--turbo');
+  assert.equal(r.code, 0, r.out + r.log);
+  assert.match(r.log, /\tS2\t\tjoin\tred\t/);
+  assert.equal((r.log.match(/\tS2\t\d+\tworker\tstarted/g) || []).length, 1);
+});
+
+test('turbo: a part whose check already passes drops the split, and the step runs whole', () => {
+  const r = gid(setup(chainSpec()), { FAKE_PLAN: twoParts(id => id === 'S2.b' ? 'true' : `test -f ${id}.txt`) }, '--turbo');
+  assert.match(r.log, /\tplan\t\tplan\t[^\n]*S2\.b: .*already passes/);
+  assert.match(r.log, /\tS2\t1\tworker\tstarted/);
+  assert.doesNotMatch(r.log, /\tS2\.a\t/);
+});
+
+test('turbo: a failed part fails its step, and --resume keeps the plan and the merged parts', () => {
+  const ctx = setup(chainSpec());
+  const first = gid(ctx, { FAKE_PLAN: twoParts(), FAKE_FAIL: 'S2.b' }, '--turbo');
+  assert.equal(first.code, 1);
+  assert.deepEqual(first.summary.steps, { S1: 'done', S2: 'failed' });
+  assert.equal(first.summary.parts['S2.a'], 'done');
+  const second = gid(ctx, { FAKE_PLAN: '{}' }, '--turbo', '--resume', first.id);
+  assert.equal(second.code, 0, second.out + second.log);
+  const resumed = second.log.slice(second.log.lastIndexOf('\tresume\t'));
+  assert.doesNotMatch(resumed, /\tS2\.a\t\d/);
+  assert.match(resumed, /\tS2\.b\t1\tworker\tstarted/);
 });

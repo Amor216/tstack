@@ -28,8 +28,9 @@ Steps 1–3 stay in one context: the spec needs the interview as a primary sourc
 Answer in order; the first match wins.
 1. One or two files, obvious approach → build here, verification loop, done.
 2. Spec steps marked `manual` only, or fewer than three steps → build here, step by step.
-3. Steps whose dependency graph has two or more independent groups that touch disjoint files → `/get-it-done turbo`.
-4. Otherwise → `/get-it-done`.
+3. Otherwise → `/get-it-done`, or `/get-it-done turbo` when time matters more than tokens. Turbo also speeds up a
+   pure chain of steps: its planner splits steps into parts that run in parallel worktrees. Never call turbo
+   pointless because steps depend on each other; say what the planner can split (pieces in different files).
 Automated builds need a check per step that runs without the user; missing → step 4 of the main flow first.
 Long runs leave the user free: say so and recommend what they can do meanwhile.
 

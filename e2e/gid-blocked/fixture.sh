@@ -1,5 +1,6 @@
 set -e
 bash "$(dirname "$0")/../_lib/todo-app.sh"
+echo "Abdeckung: keine – e2e-Fixture der Engine" >> AGENTS.md
 mkdir -p checks specs
 cat > checks/s1.sh <<'SH'
 set -e; t=$(mktemp -d); r=$(pwd); cd $t

@@ -2,7 +2,7 @@
 // checks each step itself, has a separate reviewer judge it, merges into an integration branch and
 // finally fast-forwards the base branch. A program makes every orchestration decision, not an agent.
 //
-// Usage: node gid.js <spec.md> [--turbo] [-j 4] [--no-push] [--timeout-min 30] [--max-diff 1500] [--resume <run id>]
+// Usage: node gid.js <spec.md> [--turbo] [-j 4] [--no-push] [--timeout-min 30] [--resume <run id>]
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
@@ -15,7 +15,6 @@ const noPush = has('--no-push');
 const allowNoVerify = has('--allow-no-verify');
 const jobs = turbo ? Number(opt('-j', 4)) : 1;
 const timeoutMin = Number(opt('--timeout-min', 30));
-const maxDiff = Number(opt('--max-diff', 1500));
 const resume = opt('--resume', '');
 const specArg = argv[0];
 if (!specArg) { console.error('usage: node gid.js <spec.md> [--turbo] [-j N] [--no-push]'); process.exit(2); }
@@ -75,7 +74,7 @@ function incident(step, what) {
 }
 
 // ---------- spec ----------
-const { parseSpec, gamedCheckFiles, specProblems } = require('./spec.js');
+const { parseSpec, gamedCheckFiles, specProblems, planParts, criticalPath } = require('./spec.js');
 const { coverage } = require('./verify-coverage.js');
 const gaps = cov => [...cov.problems, ...cov.uncovered.map(f => `nicht abgedeckt: ${f}`), ...cov.undriven.map(f => `ohne Drive: ${f}`)];
 const readSpec = () => parseSpec(fs.readFileSync(path.join(integ, specRel), 'utf8'));
@@ -143,8 +142,7 @@ function claude(prompt, cwd, { readOnly = false, flag = '' } = {}) {
 // ---------- one step ----------
 const goal = spec => (spec.header.match(/^# (.*)$/m) || [])[1] || specRel;
 
-async function runStep(step, spec) {
-  let findings = '';
+async function runStep(step, spec, findings = '') {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const name = `${step.id}-a${attempt}`;
     const wt = path.join(wtRoot, name);
@@ -220,7 +218,7 @@ async function runStep(step, spec) {
       const merge = git(integ, 'merge', '--no-ff', '-q', '-m', `${step.id}: ${step.title}`, branch);
       const after = merge.code === 0 ? checkInteg(step.check) : merge;
       if (merge.code === 0 && after.code === 0) {
-        markDone(step.id);
+        if (!step.part) markDone(step.id);
         log(step.id, attempt, 'merge', 'merged', gitOk(integ, 'rev-parse', '--short', 'HEAD'));
         cleanup(wt, branch);
         return 'done';
@@ -238,16 +236,51 @@ async function runStep(step, spec) {
   incident(step.id, `step failed after ${MAX_ATTEMPTS} attempts: ${findings.slice(-300)}`);
   return 'failed';
 }
+// Turbo: all parts of a split step are merged. The step's own check decides; red → one worker finishes the step.
+async function joinStep(step, spec) {
+  const r = checkInteg(step.check);
+  log(step.id, '', 'join', r.code ? 'red' : 'green', `${step.check} → ${r.out.slice(-200)}`);
+  if (r.code) return runStep(step, spec, `- All parts of ${step.id} are merged, but the step check still fails. Finish the step:\n${r.out.slice(-1500)}`);
+  markDone(step.id);
+  log(step.id, '', 'merge', 'merged', gitOk(integ, 'rev-parse', '--short', 'HEAD'));
+  return 'done';
+}
+
+// Turbo: a read-only planner splits steps into parts; the engine keeps only splits that hold up.
+// The raw plan is kept in the run dir, so --resume runs the same parts.
+async function planRun(spec) {
+  const file = path.join(runDir, 'plan.json');
+  const open = spec.steps.filter(s => !s.done && s.mode === 'auto');
+  let raw = {};
+  if (fs.existsSync(file)) raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  else if (open.length) {
+    const res = await claude([fs.readFileSync(path.join(CORE, 'planner.md'), 'utf8'),
+      `\n# Spec\n${specRel}. Open auto steps: ${open.map(s => s.id).join(', ')}.`].join('\n'), integ, { readOnly: true });
+    const json = [...(res.result || '').matchAll(/```json\s*([\s\S]*?)```/g)].pop();
+    try { raw = JSON.parse(json[1]); } catch { incident('plan', `planner gave no readable plan: ${(res.result || '').slice(-200)}`); }
+    log('plan', '', 'planner', res.is_error ? 'error' : 'finished', (res.result || '').slice(-300), count('plan', res, 'code'));
+    fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+  }
+  const { plan, kept, problems } = planParts(spec, raw);
+  for (const [id, parts] of Object.entries(plan)) {
+    const green = parts.filter(p => !resume && checkInteg(p.check).code === 0);
+    if (green.length) { delete plan[id]; problems.push(...green.map(p => `${p.id}: the check already passes, so it proves nothing: \`${p.check}\``)); }
+  }
+  for (const [id, why] of Object.entries(kept)) log('plan', '', 'plan', `${id} whole: ${why.replace(/^whole:\s*/i, '')}`);
+  for (const [id, parts] of Object.entries(plan)) log('plan', '', 'plan', `${id} split: ${parts.map(p => `${p.id}${p.blockedBy.length ? ` (after ${p.blockedBy.join(', ')})` : ''}`).join(', ')}`);
+  if (problems.length) log('plan', '', 'plan', 'runs whole', problems.join(' | '));
+  return plan;
+}
+const unitsOf = (spec, plan) => spec.steps.flatMap(s => s.done || !plan[s.id] ? [s]
+  : [...plan[s.id], { ...s, blockedBy: [...s.blockedBy, ...plan[s.id].map(p => p.id)], join: true }]);
+
 function inspect(step, attempt, wt, base) {
   const commits = Number(git(wt, 'rev-list', '--count', `${base}..HEAD`).out) || 0;
   const check = step.check ? bash(step.check, wt) : { code: 1, out: 'no check command in spec' };
-  const stat = git(wt, 'diff', '--shortstat', `${base}..HEAD`).out;
-  const lines = (stat.match(/(\d+) insertion/) || [0, 0])[1] * 1 + (stat.match(/(\d+) deletion/) || [0, 0])[1] * 1;
   log(step.id, attempt, 'check', check.code === 0 ? 'green' : 'red', `${step.check} → ${check.out.slice(-200)}`);
   const problems = [];
   if (!commits) problems.push('- No commit on the step branch: commit your changes.');
   if (check.code !== 0) problems.push(`- Check \`${step.check}\` fails:\n${check.out.slice(-1500)}`);
-  if (lines > maxDiff) problems.push(`- Diff is ${lines} lines (limit ${maxDiff}): the step is too large or touches too much.`);
   // Anti-gaming: the check is fixed by the spec. A diff that edits a file the check command names is rejected,
   // unless the step may touch it ("Berührt"); the reviewer judges those edits.
   const changed = git(wt, 'diff', '--name-only', `${base}..HEAD`).out.split('\n').filter(Boolean);
@@ -304,25 +337,34 @@ function cleanup(wt, branch) {
     process.exit(2);
   }
 
-  const state = {}; // id -> running | done | failed | blocked | split | manual
-  const running = new Map();
+  const state = {}; // unit id (step or part) -> running | done | failed | blocked | split | manual
+  const plan = turbo ? await planRun(before) : {};
+  const parts = Object.values(plan).flat();
+  const merged = fs.readFileSync(logFile, 'utf8');
+  for (const p of parts) if (new RegExp(`\\t${p.id.replace(/\./g, '\\.')}\\t\\d+\\tmerge\\tmerged\\t`).test(merged)) state[p.id] = 'done';
+  const critical = { before: criticalPath(before.steps.filter(s => !s.done)), after: criticalPath(unitsOf(before, plan).filter(u => !u.done)) };
+  if (turbo) log('run', '', 'critical path', `${critical.before} → ${critical.after} workers`);
+  const running = new Map(); // unit id -> { touches, job }
   for (;;) {
     const spec = readSpec();
     for (const s of spec.steps) if (s.done) state[s.id] = 'done';
-    const open = spec.steps.filter(s => !state[s.id]);
-    const ready = open.filter(s => s.blockedBy.every(b => state[b] === 'done'));
-    for (const s of ready.filter(s => s.mode === 'manual')) { state[s.id] = 'manual'; log(s.id, '', 'step', 'manual: needs the user'); }
-    const busy = new Set([...running.keys()].flatMap(id => spec.steps.find(s => s.id === id).touches));
-    for (const s of ready.filter(s => s.mode === 'auto')) {
+    const units = unitsOf(spec, plan);
+    const ready = units.filter(u => !state[u.id] && u.blockedBy.every(b => state[b] === 'done'));
+    for (const u of ready.filter(u => u.mode === 'manual')) { state[u.id] = 'manual'; log(u.id, '', 'step', 'manual: needs the user'); }
+    const busy = new Set([...running.values()].flatMap(r => r.touches));
+    for (const u of ready.filter(u => u.mode === 'auto')) {
       if (running.size >= jobs) break;
-      if (s.touches.some(t => busy.has(t))) continue; // shared file: serialize even if the spec missed the edge
-      s.touches.forEach(t => busy.add(t));
-      state[s.id] = 'running';
-      running.set(s.id, runStep(s, spec).then(r => { state[s.id] = r; running.delete(s.id); }));
+      if (u.touches.some(t => busy.has(t))) continue; // shared file: serialize even if the spec missed the edge
+      u.touches.forEach(t => busy.add(t));
+      state[u.id] = 'running';
+      const job = (u.join ? joinStep(u, spec) : runStep(u, spec)).then(r => { state[u.id] = r; running.delete(u.id); });
+      running.set(u.id, { touches: u.touches, job });
     }
     if (!running.size) break;
-    await Promise.race(running.values());
+    await Promise.race([...running.values()].map(r => r.job));
   }
+  // A split step that never reached its join takes the state of its first part that did not finish.
+  for (const [id, ps] of Object.entries(plan)) state[id] ??= ps.map(p => state[p.id]).find(s => s && s !== 'done');
 
   const spec = readSpec();
   const notDone = spec.steps.filter(s => state[s.id] !== 'done');
@@ -352,6 +394,7 @@ function cleanup(wt, branch) {
 
   const summary = { run: runId, spec: specRel, landed, integrationBranch: landed ? null : integBranch,
     steps: Object.fromEntries(spec.steps.map(s => [s.id, state[s.id] || 'waiting'])),
+    ...(turbo && { parts: Object.fromEntries(parts.map(p => [p.id, state[p.id] || 'waiting'])), criticalPath: critical }),
     tokens: { ...tokens, total: Object.values(tokens).reduce((a, b) => a + b, 0), ...spent },
     costUsd: { code: usd(cost.code), verification: usd(cost.verification), total: usd(cost.code + cost.verification) },
     verificationShare: Math.round(verificationShare() * 100) / 100, log: logFile };
