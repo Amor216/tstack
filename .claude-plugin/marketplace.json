@@ -1,0 +1,7 @@
+{
+  "name": "tstack",
+  "owner": { "name": "Amor216" },
+  "plugins": [
+    { "name": "tstack", "source": "./", "description": "Fast, slop-free work: minimal code, deep modules, verification loops, orchestration." }
+  ]
+}

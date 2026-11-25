@@ -1,0 +1,1 @@
+Ich überlege, ob Aufgaben einen Zustand "pausiert" bekommen sollen (offen → pausiert → offen, und erledigt). Mach mir einen Prototyp, damit ich das Zustandsmodell durchklicken kann. Ich bin nicht erreichbar, triff sinnvolle Annahmen.

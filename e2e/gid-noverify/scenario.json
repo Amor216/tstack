@@ -1,0 +1,1 @@
+{"command":"node $TSTACK/scripts/gid.js specs/01.md --no-push; echo EXIT=$?","timeoutMin":5}

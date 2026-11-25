@@ -1,0 +1,1 @@
+{"command":"node $TSTACK/scripts/gid.js specs/02-teils.md --turbo -j 3 --no-push --timeout-min 15","timeoutMin":60}

@@ -1,0 +1,6 @@
+{
+  "name": "tstack",
+  "description": "Fast, slop-free work: minimal code, deep modules, verification loops, orchestration.",
+  "author": { "name": "Amor216" },
+  "hooks": "./hooks/hooks.json"
+}
